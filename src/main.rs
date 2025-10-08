@@ -3,10 +3,25 @@ use std::collections::{BinaryHeap, HashSet};
 use std::process::{exit, id};
 
 use x11rb::connection::Connection;
-use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::errors::{ConnectionError, ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::{ErrorKind, Event};
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
+#[derive(PartialEq)]
+enum WindowGroup {
+    Master,
+    Stack,
+}
+
+enum TilingMode {
+    Stack(ModeStack),
+    Monocle,
+}
+
+struct ModeStack {
+    ratio_between_master_stack: f32,
+    spacing: u16,
+}
 
 struct WindowState {
     window: Window,
@@ -14,6 +29,8 @@ struct WindowState {
     x: i16,
     y: i16,
     width: u16,
+    height: u16,
+    group: WindowGroup,
 }
 
 impl WindowState {
@@ -28,6 +45,8 @@ impl WindowState {
             x: window_geometry.x,
             y: window_geometry.y,
             width: window_geometry.width,
+            height: window_geometry.height,
+            group: WindowGroup::Master,
         }
     }
 }
@@ -41,6 +60,7 @@ struct WindowManagerState<'a, C: Connection> {
     protocols: Atom,
     delete_window: Atom,
     sequences_to_ignore: BinaryHeap<Reverse<u16>>,
+    mode: TilingMode,
 }
 
 impl<'a, C: Connection> WindowManagerState<'a, C> {
@@ -72,6 +92,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             protocols: protocols.reply()?.atom,
             delete_window: delete_window.reply()?.atom,
             sequences_to_ignore: Default::default(),
+            mode: TilingMode::Stack(ModeStack {
+                ratio_between_master_stack: 0.5,
+                spacing: 0,
+            }),
         })
     }
 
@@ -118,6 +142,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             )
             .background_pixel(screen.white_pixel);
 
+        let window_state = WindowState::new(window, id_frame_of_window, window_geometry);
+
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
             id_frame_of_window,
@@ -141,11 +167,80 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         self.connection.map_window(id_frame_of_window)?;
         self.connection.ungrab_server()?;
 
-        self.windows.push(WindowState::new(
-            window,
-            id_frame_of_window,
-            window_geometry,
-        ));
+        self.set_all_windows_stack();
+        self.windows.push(window_state);
+        self.set_new_window_geometry()?;
+        Ok(())
+    }
+
+    fn set_all_windows_stack(&mut self) {
+        self.windows
+            .iter_mut()
+            .for_each(|w| w.group = WindowGroup::Stack);
+    }
+
+    fn set_new_window_geometry(&mut self) -> Result<(), ReplyOrIdError> {
+        let ratio = match &self.mode {
+            TilingMode::Stack(mode) => mode.ratio_between_master_stack,
+            _ => 1.0,
+        };
+
+        let screen = &self.connection.setup().roots[self.screen_num];
+
+        let stack_count = self
+            .windows
+            .iter()
+            .filter(|w| w.group == WindowGroup::Stack)
+            .count();
+
+        if let Some(master_window) = self
+            .windows
+            .iter_mut()
+            .find(|w| w.group == WindowGroup::Master)
+        {
+            master_window.x = 0;
+            master_window.y = 0;
+            master_window.width = (screen.width_in_pixels as f32 * (1.0 - ratio)) as u16;
+            master_window.height = screen.height_in_pixels;
+
+            println!(
+                "master window: w{} h{} x{} y{}",
+                master_window.width, master_window.height, 0, 0
+            );
+
+            self.connection.configure_window(
+                master_window.window,
+                &get_config_from_window_properties(master_window),
+            )?;
+            self.connection.configure_window(
+                master_window.frame_window,
+                &get_config_from_window_properties(&master_window),
+            )?;
+            self.connection.flush()?;
+        }
+
+        self.windows
+            .iter_mut()
+            .filter(|w| w.group == WindowGroup::Stack)
+            .enumerate()
+            .for_each(|(i, w)| {
+                w.x = (screen.width_in_pixels as f32 * (1.0 - ratio)) as i16;
+                w.y = (i * (screen.height_in_pixels as usize / stack_count))
+                    .try_into()
+                    .expect("damn");
+                w.width = (screen.width_in_pixels as f32 * ratio) as u16;
+                w.height = ((i + 1) * (screen.height_in_pixels as usize / stack_count)) as u16;
+
+                println!("stack window: w{} h{} x{} y{}", w.width, w.height, w.x, w.y);
+
+                self.connection
+                    .configure_window(w.window, &get_config_from_window_properties(w))
+                    .unwrap();
+                self.connection
+                    .configure_window(w.frame_window, &get_config_from_window_properties(w))
+                    .unwrap();
+                self.connection.flush().unwrap();
+            });
         Ok(())
     }
 
@@ -153,7 +248,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         while let Some(&window) = self.pending_exposed_events.iter().next() {
             self.pending_exposed_events.remove(&window);
             if let Some(state) = self.find_window_by_id(window) {
-                println!("YAY");
+                println!("there are pending events");
+                println!("window pending {window}");
             }
         }
     }
@@ -171,7 +267,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn handle_event(&mut self, event: Event) -> Result<(), ReplyOrIdError> {
-        println!("handling event {:?}",event);
         let mut should_ignore = false;
         if let Some(sequence_number) = event.wire_sequence_number() {
             while let Some(&Reverse(number_to_ignore)) = self.sequences_to_ignore.peek() {
@@ -186,6 +281,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         if should_ignore {
             return Ok(());
         }
+        // println!("handling event {:?}", event);
 
         match event {
             Event::UnmapNotify(event) => self.handle_unmap_notify(event),
@@ -193,7 +289,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             Event::MapRequest(event) => self.handle_map_request(event)?,
             Event::Expose(event) => self.handle_expose(event),
             Event::EnterNotify(event) => self.handle_enter(event)?,
-            _ => {},
+            _ => {}
         }
         Ok(())
     }
@@ -256,6 +352,18 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 }
 
+fn get_config_from_window_properties(window: &WindowState) -> ConfigureWindowAux {
+    ConfigureWindowAux {
+        x: Some(window.x.into()),
+        y: Some(window.y.into()),
+        width: Some(window.width.into()),
+        height: Some(window.height.into()),
+        border_width: None,
+        sibling: None,
+        stack_mode: None,
+    }
+}
+
 fn become_window_manager<C: Connection>(connection: &C, screen: &Screen) -> Result<(), ReplyError> {
     let change = ChangeWindowAttributesAux::default()
         .event_mask(EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY);
@@ -278,9 +386,13 @@ fn become_window_manager<C: Connection>(connection: &C, screen: &Screen) -> Resu
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, screen_num) = x11rb::connect(None)?;
     let screen = &connection.setup().roots[screen_num];
+    println!(
+        "screen: w{} h{}",
+        screen.width_in_pixels, screen.height_in_pixels
+    );
 
     become_window_manager(&connection, screen)?;
-    
+
     let mut wm_state = WindowManagerState::new(&connection, screen_num)?;
     wm_state.scan_windows()?;
 
