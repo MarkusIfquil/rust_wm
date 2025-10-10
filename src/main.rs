@@ -53,6 +53,7 @@ impl WindowState {
 
 struct WindowManagerState<'a, C: Connection> {
     connection: &'a C,
+    screen: &'a Screen,
     screen_num: usize,
     graphics_context: Gcontext,
     windows: Vec<WindowState>,
@@ -85,6 +86,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
         Ok(WindowManagerState {
             connection,
+            screen,
             screen_num,
             graphics_context: id_graphics_context,
             windows: Vec::default(),
@@ -101,8 +103,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
     fn scan_windows(&mut self) -> Result<(), ReplyOrIdError> {
         println!("scanning windows");
-        let screen = &self.connection.setup().roots[self.screen_num];
-        let root_tree_reply = self.connection.query_tree(screen.root)?.reply()?;
+        let root_tree_reply = self.connection.query_tree(self.screen.root)?.reply()?;
         let _ = root_tree_reply.children.iter().map(|window| {
             let window_attributes = self.connection.get_window_attributes(*window)?;
             let window_geometry = self.connection.get_geometry(*window)?;
@@ -128,8 +129,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         window_geometry: &GetGeometryReply,
     ) -> Result<(), ReplyOrIdError> {
         println!("managing window {window}");
-        let screen = &self.connection.setup().roots[self.screen_num];
-
         let id_frame_of_window = self.connection.generate_id()?;
         let window_aux = CreateWindowAux::new()
             .event_mask(
@@ -140,14 +139,14 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                     | EventMask::POINTER_MOTION
                     | EventMask::ENTER_WINDOW,
             )
-            .background_pixel(screen.white_pixel);
+            .background_pixel(self.screen.white_pixel);
 
         let window_state = WindowState::new(window, id_frame_of_window, window_geometry);
 
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
             id_frame_of_window,
-            screen.root,
+            self.screen.root,
             window_geometry.x,
             window_geometry.y,
             window_geometry.width,
@@ -184,9 +183,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             TilingMode::Stack(mode) => mode.ratio_between_master_stack,
             _ => 1.0,
         };
-
-        let screen = &self.connection.setup().roots[self.screen_num];
-
         let stack_count = self
             .windows
             .iter()
@@ -201,11 +197,11 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             master_window.x = 0;
             master_window.y = 0;
             master_window.width = if stack_count == 0 {
-                screen.width_in_pixels as u16
+                self.screen.width_in_pixels as u16
             } else {
-                (screen.width_in_pixels as f32 * (1.0 - ratio)) as u16
+                (self.screen.width_in_pixels as f32 * (1.0 - ratio)) as u16
             };
-            master_window.height = screen.height_in_pixels;
+            master_window.height = self.screen.height_in_pixels;
 
             println!(
                 "master window: w{} h{} x{} y{}",
@@ -235,12 +231,12 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .filter(|w| w.group == WindowGroup::Stack)
             .enumerate()
             .for_each(|(i, w)| {
-                w.x = (screen.width_in_pixels as f32 * (1.0 - ratio)) as i16;
-                w.y = (i * (screen.height_in_pixels as usize / stack_count))
+                w.x = (self.screen.width_in_pixels as f32 * (1.0 - ratio)) as i16;
+                w.y = (i * (self.screen.height_in_pixels as usize / stack_count))
                     .try_into()
                     .expect("damn");
-                w.width = (screen.width_in_pixels as f32 * ratio) as u16;
-                w.height = (screen.height_in_pixels as usize / stack_count) as u16;
+                w.width = (self.screen.width_in_pixels as f32 * ratio) as u16;
+                w.height = (self.screen.height_in_pixels as usize / stack_count) as u16;
 
                 println!("stack window: w{} h{} x{} y{}", w.width, w.height, w.x, w.y);
 
@@ -275,15 +271,13 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             if let Some(state) = self.find_window_by_id(window) {
                 println!("there are pending events");
                 println!("window pending {window}");
-
-                let screen = &self.connection.setup().roots[self.screen_num];
                 self.connection.clear_area(
                     false,
                     window,
                     0,
                     0,
-                    screen.width_in_pixels,
-                    screen.height_in_pixels,
+                    self.screen.width_in_pixels,
+                    self.screen.height_in_pixels,
                 )?;
             }
         }
