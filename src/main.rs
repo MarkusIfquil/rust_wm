@@ -127,7 +127,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         window: Window,
         window_geometry: &GetGeometryReply,
     ) -> Result<(), ReplyOrIdError> {
-        println!("mapping window {window}");
+        println!("managing window {window}");
         let screen = &self.connection.setup().roots[self.screen_num];
 
         let id_frame_of_window = self.connection.generate_id()?;
@@ -163,8 +163,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         let cookie = self
             .connection
             .reparent_window(window, id_frame_of_window, 0, 0)?;
-        self.connection.map_window(window)?;
         self.connection.map_window(id_frame_of_window)?;
+        self.connection.map_window(window)?;
         self.connection.ungrab_server()?;
 
         self.set_all_windows_stack();
@@ -200,7 +200,11 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         {
             master_window.x = 0;
             master_window.y = 0;
-            master_window.width = (screen.width_in_pixels as f32 * (1.0 - ratio)) as u16;
+            master_window.width = if stack_count == 0 {
+                screen.width_in_pixels as u16
+            } else {
+                (screen.width_in_pixels as f32 * (1.0 - ratio)) as u16
+            };
             master_window.height = screen.height_in_pixels;
 
             println!(
@@ -210,13 +214,20 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
             self.connection.configure_window(
                 master_window.window,
-                &get_config_from_window_properties(master_window),
+                &ConfigureWindowAux {
+                    x: Some(0),
+                    y: Some(0),
+                    width: Some(master_window.width as u32),
+                    height: Some(master_window.height as u32),
+                    border_width: None,
+                    sibling: None,
+                    stack_mode: None,
+                },
             )?;
             self.connection.configure_window(
                 master_window.frame_window,
-                &get_config_from_window_properties(&master_window),
+                &get_config_from_window_properties(master_window, Some(StackMode::ABOVE)),
             )?;
-            self.connection.flush()?;
         }
 
         self.windows
@@ -229,29 +240,54 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                     .try_into()
                     .expect("damn");
                 w.width = (screen.width_in_pixels as f32 * ratio) as u16;
-                w.height = ((i + 1) * (screen.height_in_pixels as usize / stack_count)) as u16;
+                w.height = (screen.height_in_pixels as usize / stack_count) as u16;
 
                 println!("stack window: w{} h{} x{} y{}", w.width, w.height, w.x, w.y);
 
                 self.connection
-                    .configure_window(w.window, &get_config_from_window_properties(w))
+                    .configure_window(
+                        w.window,
+                        &ConfigureWindowAux {
+                            x: Some(0),
+                            y: Some(0),
+                            width: Some(w.width as u32),
+                            height: Some(w.height as u32),
+                            border_width: None,
+                            sibling: None,
+                            stack_mode: None,
+                        },
+                    )
                     .unwrap();
                 self.connection
-                    .configure_window(w.frame_window, &get_config_from_window_properties(w))
+                    .configure_window(
+                        w.frame_window,
+                        &get_config_from_window_properties(w, Some(StackMode::ABOVE)),
+                    )
                     .unwrap();
-                self.connection.flush().unwrap();
             });
+        self.connection.flush()?;
         Ok(())
     }
 
-    fn refresh(&mut self) {
+    fn refresh(&mut self) -> Result<(), ReplyOrIdError> {
         while let Some(&window) = self.pending_exposed_events.iter().next() {
             self.pending_exposed_events.remove(&window);
             if let Some(state) = self.find_window_by_id(window) {
                 println!("there are pending events");
                 println!("window pending {window}");
+
+                let screen = &self.connection.setup().roots[self.screen_num];
+                self.connection.clear_area(
+                    false,
+                    window,
+                    0,
+                    0,
+                    screen.width_in_pixels,
+                    screen.height_in_pixels,
+                )?;
             }
         }
+        Ok(())
     }
 
     fn find_window_by_id(&self, window: Window) -> Option<&WindowState> {
@@ -281,7 +317,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         if should_ignore {
             return Ok(());
         }
-        // println!("handling event {:?}", event);
+        println!("got event {:?}", event);
 
         match event {
             Event::UnmapNotify(event) => self.handle_unmap_notify(event),
@@ -352,7 +388,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 }
 
-fn get_config_from_window_properties(window: &WindowState) -> ConfigureWindowAux {
+fn get_config_from_window_properties(
+    window: &WindowState,
+    mode: Option<StackMode>,
+) -> ConfigureWindowAux {
     ConfigureWindowAux {
         x: Some(window.x.into()),
         y: Some(window.y.into()),
@@ -360,7 +399,7 @@ fn get_config_from_window_properties(window: &WindowState) -> ConfigureWindowAux
         height: Some(window.height.into()),
         border_width: None,
         sibling: None,
-        stack_mode: None,
+        stack_mode: mode,
     }
 }
 
