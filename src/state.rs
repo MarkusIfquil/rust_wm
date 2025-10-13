@@ -36,13 +36,10 @@ enum WindowGroup {
     None,
 }
 
-enum TilingMode {
-    Stack(ModeStack),
-}
-
-struct ModeStack {
+pub struct ModeStack {
     ratio_between_master_stack: f32,
     spacing: i16,
+    pub border_size: i16,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -85,7 +82,7 @@ pub struct WindowManagerState<'a, C: Connection> {
     protocols: Atom,
     delete_window: Atom,
     pub sequences_to_ignore: BinaryHeap<Reverse<u16>>,
-    mode: ModeStack,
+    pub mode: ModeStack,
 }
 
 type StateResult<'a, C> = Result<WindowManagerState<'a, C>, ReplyOrIdError>;
@@ -134,6 +131,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             mode: ModeStack {
                 ratio_between_master_stack: 0.5,
                 spacing: 10,
+                border_size: 1,
             },
         })
     }
@@ -185,7 +183,21 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .find(|x| x.window == window || x.frame_window == window)
     }
 
-    pub fn handle_event(self, event: Event) -> Result<Self, ReplyOrIdError> {
+    pub fn draw_bar(&self, text: &[u8]) -> Result<(), ReplyOrIdError> {
+        self.connection.clear_area(
+            false,
+            self.bar.frame_window,
+            self.bar.x,
+            self.bar.y,
+            self.bar.width,
+            self.bar.height,
+        )?;
+        self.connection
+            .image_text8(self.bar.frame_window, self.graphics_context, 5, 10, text)?;
+        Ok(())
+    }
+
+    pub fn handle_event(mut self, event: Event) -> Result<Self, ReplyOrIdError> {
         if self.sequences_to_ignore.iter().fold(false, |b, num| {
             b || num.0 == event.wire_sequence_number().unwrap()
         }) {
@@ -193,32 +205,55 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             return Ok(self);
         }
 
-        println!("got event {:?}", event);
+        println!("Event: {:?}", event);
 
+        crate::actions::handle_event(&mut self, event.clone())?;
+        
         let state = match event {
-            Event::UnmapNotify(event) => self.handle_unmap_notify(event),
-            Event::ConfigureRequest(event) => self.handle_configure_request(event),
-            Event::MapRequest(event) => self.handle_map_request(event),
-            Event::Expose(event) => self.handle_expose(event),
-            Event::EnterNotify(event) => self.handle_enter(event),
+            Event::UnmapNotify(e) => self.handle_unmap_notify(e),
+            Event::MapRequest(e) => self.handle_map_request(e),
+            Event::Expose(e) => self.handle_expose(e),
             _ => Ok(self),
         }?;
         state.print_state();
+
         Ok(state.clear_ignored_sequences())
     }
 
-    pub fn draw_bar(&self, text: &[u8]) -> Result<(), ReplyOrIdError> {
-        self.connection.clear_area(false, self.bar.frame_window, self.bar.x, self.bar.y, self.bar.width, self.bar.height)?;
-        self.connection
-            .image_text8(self.bar.frame_window, self.graphics_context, 5, 10, text)?;
-        Ok(())
+    fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
+        println!("unmapping window {:?}", event.window);
+        let state = Self {
+            windows: self
+                .windows
+                .iter()
+                .filter(|w| w.window == event.window)
+                .map(|x| *x)
+                .collect(),
+            ..self
+        };
+        state.set_last_master_others_stack().tile_windows()
+    }
+
+    fn handle_map_request(self, event: MapRequestEvent) -> Result<Self, ReplyOrIdError> {
+        self.manage_new_window(event.window)
+    }
+
+    fn handle_expose(self, event: ExposeEvent) -> Result<Self, ReplyOrIdError> {
+        Ok(Self {
+            pending_exposed_events: {
+                let mut p = self.pending_exposed_events.clone();
+                p.insert(event.window);
+                p
+            },
+            ..self
+        })
     }
 
     fn print_state(&self) {
         println!("Manager state:");
         println!(
-            "windows: \n{:?}\nevents: \n{:?}\nseq: \n{:?}",
-            self.windows, self.pending_exposed_events, self.sequences_to_ignore
+            "windows: {:?}",
+            self.windows
         );
     }
 
@@ -279,7 +314,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         );
 
         //side effect
-        create_and_map_window(&mut self, &window)?;
+        crate::actions::create_and_map_window(&mut self, &window)?;
 
         self.add_window(window)
             .set_last_master_others_stack()
@@ -318,10 +353,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                                 - self.bar.height,
                             group: WindowGroup::Master,
                         };
-                        println!(
-                            "master window: w{} h{} x{} y{}",
-                            new_w.width, new_w.height, 0, 0
-                        );
+
                         //side effect
                         config_window(&self.connection, &new_w).unwrap();
                         new_w
@@ -351,10 +383,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                             },
                             group: WindowGroup::Stack,
                         };
-                        println!(
-                            "stack window: w{} h{} x{} y{}",
-                            new_w.width, new_w.height, new_w.x, new_w.y
-                        );
+
                         //side effect
                         config_window(&self.connection, &new_w).unwrap();
                         new_w
@@ -364,59 +393,5 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 .collect(),
             ..self
         })
-    }
-
-    fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
-        println!("unmapping window {:?}", event.window);
-        let state = Self {
-            windows: self
-                .windows
-                .iter()
-                .filter(|w| {
-                    if w.window == event.window {
-                        //side effect
-                        crate::actions::unmap_window(&self, &w).unwrap();
-
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .map(|x| *x)
-                .collect(),
-            ..self
-        };
-        state.set_last_master_others_stack().tile_windows()
-    }
-
-    fn handle_configure_request(
-        self,
-        event: ConfigureRequestEvent,
-    ) -> Result<Self, ReplyOrIdError> {
-        //side effect
-        config_event_window(&self, event).unwrap();
-
-        Ok(Self { ..self })
-    }
-
-    fn handle_map_request(self, event: MapRequestEvent) -> Result<Self, ReplyOrIdError> {
-        self.manage_new_window(event.window)
-    }
-
-    fn handle_expose(self, event: ExposeEvent) -> Result<Self, ReplyOrIdError> {
-        Ok(Self {
-            pending_exposed_events: {
-                let mut p = self.pending_exposed_events.clone();
-                p.insert(event.window);
-                p
-            },
-            ..self
-        })
-    }
-
-    fn handle_enter(self, event: EnterNotifyEvent) -> Result<Self, ReplyOrIdError> {
-        //side effect
-        set_focus_window(&self, event).unwrap();
-        Ok(Self { ..self })
     }
 }
