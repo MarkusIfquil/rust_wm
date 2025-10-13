@@ -96,7 +96,6 @@ pub fn create_and_map_window<C: Connection>(
                     | EventMask::ENTER_WINDOW,
             )
             .background_pixel(wm_state.screen.white_pixel)
-            .border_pixel(wm_state.screen.white_pixel),
     )?;
     wm_state.connection.grab_server()?;
     wm_state

@@ -1,13 +1,14 @@
-mod state;
 mod actions;
+mod state;
 
 use std::process::exit;
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
-use x11rb::protocol::xproto::*;
 use x11rb::protocol::ErrorKind;
+use x11rb::protocol::xproto::*;
 
+use crate::actions::create_and_map_window;
 use crate::state::*;
 
 fn become_window_manager<C: Connection>(connection: &C, screen: &Screen) -> Result<(), ReplyError> {
@@ -35,6 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wm_state = WindowManagerState::new(&connection, screen_num)?;
     become_window_manager(&connection, wm_state.screen)?;
 
+    let bar = wm_state.bar;
+    create_and_map_window(&mut wm_state, &bar)?;
+    connection.image_text8(
+        wm_state.bar.frame_window,
+        wm_state.graphics_context,
+        5,
+        10,
+        b"Hellogfhfghfghg",
+    )?;
     println!(
         "screen: w{} h{}",
         wm_state.screen.width_in_pixels, wm_state.screen.height_in_pixels

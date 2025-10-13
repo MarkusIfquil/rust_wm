@@ -32,6 +32,7 @@ where
 enum WindowGroup {
     Master,
     Stack,
+    None,
 }
 
 enum TilingMode {
@@ -76,8 +77,9 @@ pub struct WindowManagerState<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
     pub screen_num: usize,
-    graphics_context: Gcontext,
+    pub graphics_context: Gcontext,
     pub windows: Vec<WindowState>,
+    pub bar: WindowState,
     pending_exposed_events: HashSet<Window>,
     protocols: Atom,
     delete_window: Atom,
@@ -99,7 +101,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .font(id_font);
 
         //TODO: Separate side effect into function
-        connection.open_font(id_font, b"9x15")?;
+        connection.open_font(id_font, b"fixed")?;
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
         connection.close_font(id_font)?;
 
@@ -109,6 +111,15 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             screen_num,
             graphics_context: id_graphics_context,
             windows: Vec::default(),
+            bar: WindowState {
+                window: connection.generate_id()?,
+                frame_window: connection.generate_id()?,
+                x: 0,
+                y: 0,
+                width: screen.width_in_pixels,
+                height: 20,
+                group: WindowGroup::None,
+            },
             pending_exposed_events: HashSet::default(),
             protocols: connection
                 .intern_atom(false, b"WM_PROTOCOLS")?
@@ -173,7 +184,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             return Ok(self);
         }
 
-        // println!("got event {:?}", event);
+        println!("got event {:?}", event);
 
         let state = match event {
             Event::UnmapNotify(event) => self.handle_unmap_notify(event),
@@ -278,7 +289,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                             window: w.window,
                             frame_window: w.frame_window,
                             x: 0 + self.mode.spacing,
-                            y: 0 + self.mode.spacing,
+                            y: 0 + self.mode.spacing + self.bar.height as i16,
                             width: if stack_count == 0 {
                                 self.screen.width_in_pixels - (self.mode.spacing * 2) as u16
                             } else {
@@ -286,7 +297,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                                     - ((self.mode.spacing * 2) as f32))
                                     as u16
                             },
-                            height: self.screen.height_in_pixels - (self.mode.spacing * 2) as u16,
+                            height: self.screen.height_in_pixels - (self.mode.spacing * 2) as u16 - self.bar.height,
                             group: WindowGroup::Master,
                         };
                         println!(
@@ -305,21 +316,18 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                             y: if i == 0 {
                                 (i * (self.screen.height_in_pixels as usize / stack_count)
                                     + self.mode.spacing as usize)
-                                    .try_into()
-                                    .expect("damn")
+                                    as i16 + self.bar.height as i16
                             } else {
-                                (i * (self.screen.height_in_pixels as usize / stack_count))
-                                    .try_into()
-                                    .expect("damn")
+                                (i * (self.screen.height_in_pixels as usize / stack_count)) as i16
                             },
                             width: (self.screen.width_in_pixels as f32 * ratio) as u16
                                 - (self.mode.spacing) as u16,
                             height: if i == 0 {
                                 (self.screen.height_in_pixels as usize / stack_count) as u16
-                                    - (self.mode.spacing * 2) as u16
+                                    - (self.mode.spacing * 2) as u16 - self.bar.height
                             } else {
                                 (self.screen.height_in_pixels as usize / stack_count) as u16
-                                - (self.mode.spacing) as u16
+                                    - (self.mode.spacing) as u16
                             },
                             group: WindowGroup::Stack,
                         };
@@ -331,6 +339,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                         config_window(&self.connection, &new_w).unwrap();
                         new_w
                     }
+                    _ => *w,
                 })
                 .collect(),
             ..self
