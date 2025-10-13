@@ -1,0 +1,143 @@
+use std::cmp::Reverse;
+
+use x11rb::connection::Connection;
+use x11rb::errors::ReplyOrIdError;
+use x11rb::protocol::xproto::*;
+use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
+
+use crate::state::*;
+
+pub fn set_focus_window<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    event: EnterNotifyEvent,
+) -> Result<(), ReplyOrIdError> {
+    if let Some(state) = wm_state.find_window_by_id(event.event) {
+        println!("setting focus to: {:?}", state.window);
+        // Set the input focus (ignoring ICCCM's WM_PROTOCOLS / WM_TAKE_FOCUS)
+        wm_state
+            .connection
+            .set_input_focus(InputFocus::PARENT, state.window, CURRENT_TIME)?;
+        // Also raise the window to the top of the stacking order
+        wm_state.connection.configure_window(
+            state.frame_window,
+            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+        )?;
+    }
+    Ok(())
+}
+
+pub fn config_event_window<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    event: ConfigureRequestEvent,
+) -> Result<(), ReplyOrIdError> {
+    let aux = ConfigureWindowAux::from_configure_request(&event)
+        .sibling(None)
+        .stack_mode(None);
+    println!("Configure: {aux:?}");
+    wm_state.connection.configure_window(event.window, &aux)?;
+    Ok(())
+}
+
+pub fn unmap_window<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    window: &WindowState,
+) -> Result<(), ReplyOrIdError> {
+    wm_state
+        .connection
+        .change_save_set(SetMode::DELETE, window.window)
+        .unwrap();
+    wm_state
+        .connection
+        .reparent_window(
+            window.window,
+            wm_state.connection.setup().roots[wm_state.screen_num].root,
+            window.x,
+            window.y,
+        )
+        .unwrap();
+    wm_state
+        .connection
+        .destroy_window(window.frame_window)
+        .unwrap();
+    Ok(())
+}
+
+pub fn create_and_map_window<C: Connection>(
+    wm_state: &mut WindowManagerState<C>,
+    window: &WindowState,
+) -> Result<(), ReplyOrIdError> {
+    wm_state.connection.create_window(
+        COPY_DEPTH_FROM_PARENT,
+        window.frame_window,
+        wm_state.screen.root,
+        window.x,
+        window.y,
+        window.width,
+        window.height,
+        1,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new()
+            .event_mask(
+                EventMask::EXPOSURE
+                    | EventMask::SUBSTRUCTURE_NOTIFY
+                    | EventMask::BUTTON_PRESS
+                    | EventMask::BUTTON_RELEASE
+                    | EventMask::POINTER_MOTION
+                    | EventMask::ENTER_WINDOW,
+            )
+            .background_pixel(wm_state.screen.white_pixel),
+    )?;
+    wm_state.connection.grab_server()?;
+    wm_state
+        .connection
+        .change_save_set(SetMode::INSERT, window.window)?;
+    let cookie = wm_state
+        .connection
+        .reparent_window(window.window, window.frame_window, 0, 0)?;
+    wm_state.connection.map_window(window.frame_window)?;
+    wm_state.connection.map_window(window.window)?;
+    wm_state.connection.ungrab_server()?;
+    wm_state
+        .sequences_to_ignore
+        .push(Reverse(cookie.sequence_number() as u16));
+    Ok(())
+}
+
+pub fn config_window<C: Connection>(
+    connection: &C,
+    window: &WindowState,
+) -> Result<(), ReplyOrIdError> {
+    connection.configure_window(
+        window.window,
+        &ConfigureWindowAux {
+            x: Some(0),
+            y: Some(0),
+            width: Some(window.width as u32),
+            height: Some(window.height as u32),
+            border_width: None,
+            sibling: None,
+            stack_mode: None,
+        },
+    )?;
+    connection.configure_window(
+        window.frame_window,
+        &get_config_from_window_properties(window, Some(StackMode::ABOVE)),
+    )?;
+    Ok(())
+}
+
+fn get_config_from_window_properties(
+    window: &WindowState,
+    mode: Option<StackMode>,
+) -> ConfigureWindowAux {
+    ConfigureWindowAux {
+        x: Some(window.x.into()),
+        y: Some(window.y.into()),
+        width: Some(window.width.into()),
+        height: Some(window.height.into()),
+        border_width: None,
+        sibling: None,
+        stack_mode: mode,
+    }
+}
