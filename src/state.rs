@@ -160,6 +160,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     pub fn refresh(self) -> Result<Self, ReplyOrIdError> {
+        let _ = self.pending_exposed_events
+            .iter()
+            .filter(|id| **id == self.bar.window)
+            .map(|_| {self.draw_bar()?; Ok::<(),ReplyOrIdError>(())});
         Ok(Self {
             pending_exposed_events: {
                 let mut p = self.pending_exposed_events;
@@ -196,6 +200,17 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         }?;
         state.print_state();
         Ok(state.clear_ignored_sequences())
+    }
+
+    pub fn draw_bar(&self) -> Result<(), ReplyOrIdError> {
+        self.connection.image_text8(
+            self.bar.frame_window,
+            self.graphics_context,
+            5,
+            10,
+            b"Hellogfhfghfghg",
+        )?;
+        Ok(())
     }
 
     fn print_state(&self) {
@@ -297,7 +312,9 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                                     - ((self.mode.spacing * 2) as f32))
                                     as u16
                             },
-                            height: self.screen.height_in_pixels - (self.mode.spacing * 2) as u16 - self.bar.height,
+                            height: self.screen.height_in_pixels
+                                - (self.mode.spacing * 2) as u16
+                                - self.bar.height,
                             group: WindowGroup::Master,
                         };
                         println!(
@@ -316,7 +333,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                             y: if i == 0 {
                                 (i * (self.screen.height_in_pixels as usize / stack_count)
                                     + self.mode.spacing as usize)
-                                    as i16 + self.bar.height as i16
+                                    as i16
+                                    + self.bar.height as i16
                             } else {
                                 (i * (self.screen.height_in_pixels as usize / stack_count)) as i16
                             },
@@ -324,7 +342,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                                 - (self.mode.spacing) as u16,
                             height: if i == 0 {
                                 (self.screen.height_in_pixels as usize / stack_count) as u16
-                                    - (self.mode.spacing * 2) as u16 - self.bar.height
+                                    - (self.mode.spacing * 2) as u16
+                                    - self.bar.height
                             } else {
                                 (self.screen.height_in_pixels as usize / stack_count) as u16
                                     - (self.mode.spacing) as u16
