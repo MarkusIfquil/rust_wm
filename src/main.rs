@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let event = connection.wait_for_event()?;
         let mut event_as_option = Some(event);
-        wm_state.draw_bar()?;
+        wm_state.draw_bar(b"")?;
 
         while let Some(event) = event_as_option {
             wm_state = wm_state.handle_event(event)?;

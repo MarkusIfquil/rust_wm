@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::os::linux::raw::stat;
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
@@ -31,6 +32,21 @@ pub fn set_focus_window<C: Connection>(
                 .stack_mode(StackMode::ABOVE)
                 .border_width(1),
         )?;
+        let window_name = &wm_state
+            .connection
+            .get_property(
+                false,
+                state.window,
+                AtomEnum::WM_NAME,
+                AtomEnum::STRING,
+                0,
+                u32::MAX,
+            )?
+            .reply()?
+            .value;
+        println!("bar text: {:?} event id {}", window_name, state.window);
+        wm_state.draw_bar(&[])?;
+        wm_state.draw_bar(window_name)?;
     }
     Ok(())
 }

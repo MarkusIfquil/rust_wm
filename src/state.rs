@@ -2,6 +2,7 @@ use crate::actions::*;
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
+use std::u32;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::Event;
@@ -160,10 +161,14 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     pub fn refresh(self) -> Result<Self, ReplyOrIdError> {
-        let _ = self.pending_exposed_events
+        let _ = self
+            .pending_exposed_events
             .iter()
             .filter(|id| **id == self.bar.window)
-            .map(|_| {self.draw_bar()?; Ok::<(),ReplyOrIdError>(())});
+            .map(|_| {
+                self.draw_bar(b"")?;
+                Ok::<(), ReplyOrIdError>(())
+            });
         Ok(Self {
             pending_exposed_events: {
                 let mut p = self.pending_exposed_events;
@@ -202,14 +207,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         Ok(state.clear_ignored_sequences())
     }
 
-    pub fn draw_bar(&self) -> Result<(), ReplyOrIdError> {
-        self.connection.image_text8(
-            self.bar.frame_window,
-            self.graphics_context,
-            5,
-            10,
-            b"Hellogfhfghfghg",
-        )?;
+    pub fn draw_bar(&self, text: &[u8]) -> Result<(), ReplyOrIdError> {
+        self.connection.clear_area(false, self.bar.frame_window, self.bar.x, self.bar.y, self.bar.width, self.bar.height)?;
+        self.connection
+            .image_text8(self.bar.frame_window, self.graphics_context, 5, 10, text)?;
         Ok(())
     }
 
@@ -416,7 +417,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     fn handle_enter(self, event: EnterNotifyEvent) -> Result<Self, ReplyOrIdError> {
         //side effect
         set_focus_window(&self, event).unwrap();
-
         Ok(Self { ..self })
     }
 }
