@@ -77,7 +77,7 @@ pub struct WindowManagerState<'a, C: Connection> {
     pub screen: &'a Screen,
     pub screen_num: usize,
     graphics_context: Gcontext,
-    windows: Vec<WindowState>,
+    pub windows: Vec<WindowState>,
     pending_exposed_events: HashSet<Window>,
     protocols: Atom,
     delete_window: Atom,

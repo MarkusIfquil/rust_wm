@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
+use x11rb::properties::WmSizeHints;
 use x11rb::protocol::xproto::*;
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 
@@ -17,10 +18,18 @@ pub fn set_focus_window<C: Connection>(
         wm_state
             .connection
             .set_input_focus(InputFocus::PARENT, state.window, CURRENT_TIME)?;
-        // Also raise the window to the top of the stacking order
+
+        wm_state.windows.iter().for_each(|w| {
+            wm_state
+                .connection
+                .configure_window(w.frame_window, &ConfigureWindowAux::new().border_width(0))
+                .unwrap();
+        });
         wm_state.connection.configure_window(
             state.frame_window,
-            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+            &ConfigureWindowAux::new()
+                .stack_mode(StackMode::ABOVE)
+                .border_width(1),
         )?;
     }
     Ok(())
@@ -74,7 +83,7 @@ pub fn create_and_map_window<C: Connection>(
         window.y,
         window.width,
         window.height,
-        1,
+        0,
         WindowClass::INPUT_OUTPUT,
         0,
         &CreateWindowAux::new()
@@ -86,7 +95,8 @@ pub fn create_and_map_window<C: Connection>(
                     | EventMask::POINTER_MOTION
                     | EventMask::ENTER_WINDOW,
             )
-            .background_pixel(wm_state.screen.white_pixel),
+            .background_pixel(wm_state.screen.white_pixel)
+            .border_pixel(wm_state.screen.white_pixel),
     )?;
     wm_state.connection.grab_server()?;
     wm_state
