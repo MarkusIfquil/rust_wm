@@ -144,6 +144,30 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         }
     }
 
+    fn set_last_master_others_stack(self) -> Self {
+        Self {
+            windows: self
+                .windows
+                .iter()
+                .enumerate()
+                .map(|(i, w)| {
+                    if i == self.windows.len() - 1 {
+                        WindowState {
+                            group: WindowGroup::Master,
+                            ..*w
+                        }
+                    } else {
+                        WindowState {
+                            group: WindowGroup::Stack,
+                            ..*w
+                        }
+                    }
+                })
+                .collect(),
+            ..self
+        }
+    }
+
     fn clear_ignored_sequences(self) -> Self {
         Self {
             sequences_to_ignore: {
@@ -194,8 +218,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         //side effect
         create_and_map_window(&mut self, &window)?;
 
-        self.set_all_windows_stack()
-            .add_window(window)
+        self.add_window(window)
+            .set_last_master_others_stack()
             .set_new_window_geometry()
     }
 
@@ -314,7 +338,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             return Ok(self);
         }
 
-        println!("got event {:?}", event);
+        println!("got event {:?}", event.response_type());
 
         let state = match event {
             Event::UnmapNotify(event) => self.handle_unmap_notify(event),
@@ -329,12 +353,13 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
-        Ok(Self {
+        println!("unmapping window {:?}", event.window);
+        let state = Self {
             windows: self
                 .windows
                 .iter()
                 .filter(|w| {
-                    if w.window != event.window {
+                    if w.window == event.window {
                         //side effect
                         unmap_window(&self, &w).unwrap();
 
@@ -346,7 +371,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 .map(|x| *x)
                 .collect(),
             ..self
-        })
+        };
+        state.set_last_master_others_stack().set_new_window_geometry()
     }
 
     fn handle_configure_request(
