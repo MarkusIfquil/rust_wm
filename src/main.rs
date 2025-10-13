@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wm_state.screen.width_in_pixels, wm_state.screen.height_in_pixels
     );
 
-    wm_state = wm_state.scan_windows()?;
+    wm_state = wm_state.scan_for_new_windows()?;
     loop {
         wm_state = wm_state.refresh()?;
         connection.flush()?;

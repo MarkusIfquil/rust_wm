@@ -124,7 +124,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         })
     }
 
-    pub fn scan_windows(self) -> Result<Self, ReplyOrIdError> {
+    pub fn scan_for_new_windows(self) -> Result<Self, ReplyOrIdError> {
         println!("scanning windows");
 
         Ok(self
@@ -143,7 +143,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 window_attributes.override_redirect
                 && window_attributes.map_state != MapState::UNMAPPED
             })
-            .fold(self, |s, window| s.manage_window(*window).unwrap()))
+            .fold(self, |s, window| s.manage_new_window(*window).unwrap()))
     }
     
     pub fn refresh(self) -> Result<Self, ReplyOrIdError> {
@@ -181,10 +181,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             Event::EnterNotify(event) => self.handle_enter(event),
             _ => Ok(self),
         }?;
-        state.print_state();
+        // state.print_state();
         Ok(state.clear_ignored_sequences())
     }
-    
+
     fn print_state(&self) {
         println!("Manager state:");
         println!(
@@ -235,7 +235,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         }
     }
 
-    fn manage_window(mut self, window: Window) -> Result<Self, ReplyOrIdError> {
+    fn manage_new_window(mut self, window: Window) -> Result<Self, ReplyOrIdError> {
         println!("managing window {window}");
 
         let window = WindowState::new(
@@ -254,10 +254,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
         self.add_window(window)
             .set_last_master_others_stack()
-            .set_new_window_geometry()
+            .tile_windows()
     }
 
-    fn set_new_window_geometry(self) -> Result<Self, ReplyOrIdError> {
+    fn tile_windows(self) -> Result<Self, ReplyOrIdError> {
         let ratio = match &self.mode {
             TilingMode::Stack(mode) => mode.ratio_between_master_stack,
         };
@@ -342,7 +342,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 .collect(),
             ..self
         };
-        state.set_last_master_others_stack().set_new_window_geometry()
+        state.set_last_master_others_stack().tile_windows()
     }
 
     fn handle_configure_request(
@@ -356,7 +356,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn handle_map_request(self, event: MapRequestEvent) -> Result<Self, ReplyOrIdError> {
-        self.manage_window(event.window)
+        self.manage_new_window(event.window)
     }
 
     fn handle_expose(self, event: ExposeEvent) -> Result<Self, ReplyOrIdError> {
