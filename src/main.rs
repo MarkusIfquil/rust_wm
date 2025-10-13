@@ -1,8 +1,8 @@
 use core::time;
-use std::thread;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 use std::process::{exit, id};
+use std::thread;
 
 use x11rb::connection::{self, Connection};
 use x11rb::errors::{ConnectionError, ReplyError, ReplyOrIdError};
@@ -131,12 +131,26 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
     fn print_state(&self) {
         println!("Manager state:");
-        println!("windows: \n{:?}\nevents: \n{:?}\nseq: \n{:?}",self.windows,self.pending_exposed_events,self.sequences_to_ignore);
+        println!(
+            "windows: \n{:?}\nevents: \n{:?}\nseq: \n{:?}",
+            self.windows, self.pending_exposed_events, self.sequences_to_ignore
+        );
     }
 
     fn add_window(self, window: WindowState) -> Self {
         Self {
             windows: self.windows.new_with(window),
+            ..self
+        }
+    }
+
+    fn clear_ignored_sequences(self) -> Self {
+        Self {
+            sequences_to_ignore: {
+                let mut s = self.sequences_to_ignore;
+                s.clear();
+                s
+            },
             ..self
         }
     }
@@ -178,10 +192,9 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         );
 
         //side effect
-        create_and_map_window( &mut self, &window)?;
+        create_and_map_window(&mut self, &window)?;
 
-        self
-            .set_all_windows_stack()
+        self.set_all_windows_stack()
             .add_window(window)
             .set_new_window_geometry()
     }
@@ -266,21 +279,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn refresh(self) -> Result<Self, ReplyOrIdError> {
-        // self.pending_exposed_events.iter().map(|window| {
-        // self.pending_exposed_events.remove(&window);
-        // if let Some(state) = self.find_window_by_id(window) {
-        // println!("there are pending events");
-        // println!("window pending {window}");
-        // self.connection.clear_area(
-        // false,
-        // window,
-        // 0,
-        // 0,
-        // self.screen.width_in_pixels,
-        // self.screen.height_in_pixels,
-        // )?;
-        // }
-        // });
         Ok(Self {
             pending_exposed_events: {
                 let mut p = self.pending_exposed_events;
@@ -297,25 +295,22 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .find(|x| x.window == window || x.frame_window == window)
     }
 
-    fn handle_event(mut self, event: Event) -> Result<Self, ReplyOrIdError> {
-        let mut should_ignore = false;
-        if let Some(seqno) = event.wire_sequence_number() {
-            // Check sequences_to_ignore and remove entries with old (=smaller) numbers.
-            while let Some(&Reverse(to_ignore)) = self.sequences_to_ignore.peek() {
-                // Sequence numbers can wrap around, so we cannot simply check for
-                // "to_ignore <= seqno". This is equivalent to "to_ignore - seqno <= 0", which is what we
-                // check instead. Since sequence numbers are unsigned, we need a trick: We decide
-                // that values from [MAX/2, MAX] count as "<= 0" and the rest doesn't.
-                if to_ignore.wrapping_sub(seqno) <= u16::MAX / 2 {
-                    // If the two sequence numbers are equal, this event should be ignored.
-                    should_ignore = to_ignore == seqno;
-                    break;
-                }
-                self.sequences_to_ignore.pop();
-            }
-        }
-        if should_ignore {
-            println!("ignoring event {:?}",event);
+    fn handle_event(self, event: Event) -> Result<Self, ReplyOrIdError> {
+        // let mut should_ignore = false;
+        // if let Some(seqno) = event.wire_sequence_number() {
+        //     while let Some(&Reverse(to_ignore)) = self.sequences_to_ignore.peek() {
+        //         if to_ignore.wrapping_sub(seqno) <= u16::MAX / 2 {
+        //             should_ignore = to_ignore == seqno;
+        //             break;
+        //         }
+        //         self.sequences_to_ignore.pop();
+        //     }
+        // }
+
+        if self.sequences_to_ignore.iter().fold(false, |b, num| {
+            b || num.0 == event.wire_sequence_number().unwrap()
+        }) {
+            println!("ignoring event {:?}", event);
             return Ok(self);
         }
 
@@ -330,7 +325,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             _ => Ok(self),
         }?;
         state.print_state();
-        Ok(state)
+        Ok(state.clear_ignored_sequences())
     }
 
     fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
@@ -354,7 +349,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         })
     }
 
-    fn handle_configure_request(self, event: ConfigureRequestEvent) -> Result<Self, ReplyOrIdError> {
+    fn handle_configure_request(
+        self,
+        event: ConfigureRequestEvent,
+    ) -> Result<Self, ReplyOrIdError> {
         //side effect
         config_event_window(&self, event).unwrap();
 
@@ -379,16 +377,20 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     fn handle_enter(self, event: EnterNotifyEvent) -> Result<Self, ReplyOrIdError> {
         //side effect
         set_focus_window(&self, event).unwrap();
-        
+
         Ok(Self { ..self })
     }
 }
 
-fn set_focus_window<C: Connection>(wm_state: &WindowManagerState<C>, event: EnterNotifyEvent) -> Result<(),ReplyOrIdError> {
+fn set_focus_window<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    event: EnterNotifyEvent,
+) -> Result<(), ReplyOrIdError> {
     if let Some(state) = wm_state.find_window_by_id(event.event) {
-        println!("setting focus to: {:?}",state.window);
+        println!("setting focus to: {:?}", state.window);
         // Set the input focus (ignoring ICCCM's WM_PROTOCOLS / WM_TAKE_FOCUS)
-        wm_state.connection
+        wm_state
+            .connection
             .set_input_focus(InputFocus::PARENT, state.window, CURRENT_TIME)?;
         // Also raise the window to the top of the stacking order
         wm_state.connection.configure_window(
@@ -471,8 +473,9 @@ fn create_and_map_window<C: Connection>(
     wm_state.connection.map_window(window.frame_window)?;
     wm_state.connection.map_window(window.window)?;
     wm_state.connection.ungrab_server()?;
-    wm_state.sequences_to_ignore
-            .push(Reverse(cookie.sequence_number() as u16));
+    wm_state
+        .sequences_to_ignore
+        .push(Reverse(cookie.sequence_number() as u16));
     Ok(())
 }
 
