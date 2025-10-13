@@ -1,11 +1,11 @@
 use crate::actions::*;
 
+use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
-use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
-use std::cmp::Reverse;
+use x11rb::protocol::xproto::*;
 
 type Window = u32;
 trait VecExt<T>
@@ -40,6 +40,7 @@ enum TilingMode {
 
 struct ModeStack {
     ratio_between_master_stack: f32,
+    spacing: i16,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -81,7 +82,7 @@ pub struct WindowManagerState<'a, C: Connection> {
     protocols: Atom,
     delete_window: Atom,
     pub sequences_to_ignore: BinaryHeap<Reverse<u16>>,
-    mode: TilingMode,
+    mode: ModeStack,
 }
 
 type StateResult<'a, C> = Result<WindowManagerState<'a, C>, ReplyOrIdError>;
@@ -118,9 +119,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 .reply()?
                 .atom,
             sequences_to_ignore: Default::default(),
-            mode: TilingMode::Stack(ModeStack {
+            mode: ModeStack {
                 ratio_between_master_stack: 0.5,
-            }),
+                spacing: 10,
+            },
         })
     }
 
@@ -141,11 +143,11 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                     .reply()
                     .unwrap();
                 window_attributes.override_redirect
-                && window_attributes.map_state != MapState::UNMAPPED
+                    && window_attributes.map_state != MapState::UNMAPPED
             })
             .fold(self, |s, window| s.manage_new_window(*window).unwrap()))
     }
-    
+
     pub fn refresh(self) -> Result<Self, ReplyOrIdError> {
         Ok(Self {
             pending_exposed_events: {
@@ -171,7 +173,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             return Ok(self);
         }
 
-        println!("got event {:?}", event);
+        // println!("got event {:?}", event);
 
         let state = match event {
             Event::UnmapNotify(event) => self.handle_unmap_notify(event),
@@ -181,7 +183,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             Event::EnterNotify(event) => self.handle_enter(event),
             _ => Ok(self),
         }?;
-        // state.print_state();
+        state.print_state();
         Ok(state.clear_ignored_sequences())
     }
 
@@ -192,7 +194,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             self.windows, self.pending_exposed_events, self.sequences_to_ignore
         );
     }
-    
+
     fn add_window(self, window: WindowState) -> Self {
         Self {
             windows: self.windows.new_with(window),
@@ -258,9 +260,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn tile_windows(self) -> Result<Self, ReplyOrIdError> {
-        let ratio = match &self.mode {
-            TilingMode::Stack(mode) => mode.ratio_between_master_stack,
-        };
+        let ratio = self.mode.ratio_between_master_stack;
         let stack_count = self
             .windows
             .iter()
@@ -277,14 +277,16 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                         let new_w = WindowState {
                             window: w.window,
                             frame_window: w.frame_window,
-                            x: 0,
-                            y: 0,
+                            x: 0 + self.mode.spacing,
+                            y: 0 + self.mode.spacing,
                             width: if stack_count == 0 {
-                                self.screen.width_in_pixels as u16
+                                self.screen.width_in_pixels - (self.mode.spacing * 2) as u16
                             } else {
-                                (self.screen.width_in_pixels as f32 * (1.0 - ratio)) as u16
+                                ((self.screen.width_in_pixels as f32 * (1.0 - ratio))
+                                    - ((self.mode.spacing * 2) as f32))
+                                    as u16
                             },
-                            height: self.screen.height_in_pixels,
+                            height: self.screen.height_in_pixels - (self.mode.spacing * 2) as u16,
                             group: WindowGroup::Master,
                         };
                         println!(
@@ -300,11 +302,25 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                             window: w.window,
                             frame_window: w.frame_window,
                             x: (self.screen.width_in_pixels as f32 * (1.0 - ratio)) as i16,
-                            y: (i * (self.screen.height_in_pixels as usize / stack_count))
-                                .try_into()
-                                .expect("damn"),
-                            width: (self.screen.width_in_pixels as f32 * ratio) as u16,
-                            height: (self.screen.height_in_pixels as usize / stack_count) as u16,
+                            y: if i == 0 {
+                                (i * (self.screen.height_in_pixels as usize / stack_count)
+                                    + self.mode.spacing as usize)
+                                    .try_into()
+                                    .expect("damn")
+                            } else {
+                                (i * (self.screen.height_in_pixels as usize / stack_count))
+                                    .try_into()
+                                    .expect("damn")
+                            },
+                            width: (self.screen.width_in_pixels as f32 * ratio) as u16
+                                - (self.mode.spacing) as u16,
+                            height: if i == 0 {
+                                (self.screen.height_in_pixels as usize / stack_count) as u16
+                                    - (self.mode.spacing * 2) as u16
+                            } else {
+                                (self.screen.height_in_pixels as usize / stack_count) as u16
+                                - (self.mode.spacing) as u16
+                            },
                             group: WindowGroup::Stack,
                         };
                         println!(
@@ -320,7 +336,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             ..self
         })
     }
-
 
     fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
         println!("unmapping window {:?}", event.window);
