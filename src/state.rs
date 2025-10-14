@@ -98,10 +98,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .foreground(screen.black_pixel)
             .font(id_font);
 
-        //TODO: Separate side effect into function
-        connection.open_font(id_font, b"fixed")?;
-        connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
-        connection.close_font(id_font)?;
+        //side effect
+        set_font(connection, id_font, id_graphics_context, screen, &graphics_context)?;
 
         Ok(WindowManagerState {
             connection,
@@ -159,14 +157,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     pub fn refresh(self) -> Result<Self, ReplyOrIdError> {
-        let _ = self
-            .pending_exposed_events
-            .iter()
-            .filter(|id| **id == self.bar.window)
-            .map(|_| {
-                self.draw_bar(b"")?;
-                Ok::<(), ReplyOrIdError>(())
-            });
         Ok(Self {
             pending_exposed_events: {
                 let mut p = self.pending_exposed_events;
@@ -183,20 +173,6 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .find(|x| x.window == window || x.frame_window == window)
     }
 
-    pub fn draw_bar(&self, text: &[u8]) -> Result<(), ReplyOrIdError> {
-        self.connection.clear_area(
-            false,
-            self.bar.frame_window,
-            self.bar.x,
-            self.bar.y,
-            self.bar.width,
-            self.bar.height,
-        )?;
-        self.connection
-            .image_text8(self.bar.frame_window, self.graphics_context, 5, 10, text)?;
-        Ok(())
-    }
-
     pub fn handle_event(mut self, event: Event) -> Result<Self, ReplyOrIdError> {
         if self.sequences_to_ignore.iter().fold(false, |b, num| {
             b || num.0 == event.wire_sequence_number().unwrap()
@@ -208,7 +184,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         println!("Event: {:?}", event);
 
         crate::actions::handle_event(&mut self, event.clone())?;
-        
+
         let state = match event {
             Event::UnmapNotify(e) => self.handle_unmap_notify(e),
             Event::MapRequest(e) => self.handle_map_request(e),
@@ -251,10 +227,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
     fn print_state(&self) {
         println!("Manager state:");
-        println!(
-            "windows: {:?}",
-            self.windows
-        );
+        println!("windows: {:?}", self.windows);
     }
 
     fn add_window(self, window: WindowState) -> Self {

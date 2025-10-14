@@ -36,7 +36,7 @@ pub fn create_and_map_window<C: Connection>(
     wm_state: &mut WindowManagerState<C>,
     window: &WindowState,
 ) -> Result<(), ReplyOrIdError> {
-    println!("creating window: {}",window.window);
+    println!("creating window: {}", window.window);
     wm_state.connection.create_window(
         COPY_DEPTH_FROM_PARENT,
         window.frame_window,
@@ -81,7 +81,7 @@ fn unmap_window<C: Connection>(
     event: UnmapNotifyEvent,
 ) -> Result<(), ReplyOrIdError> {
     if let Some(window) = wm_state.find_window_by_id(event.window) {
-        println!("unmapping window: {}",window.window);
+        println!("unmapping window: {}", window.window);
         wm_state
             .connection
             .change_save_set(SetMode::DELETE, window.window)
@@ -153,8 +153,8 @@ fn set_focus_window<C: Connection>(
             .reply()?
             .value;
         println!("bar text: {:?} event id {}", window_name, state.window);
-        wm_state.draw_bar(&[])?;
-        wm_state.draw_bar(window_name)?;
+        draw_bar(wm_state, &[])?;
+        draw_bar(wm_state, window_name)?;
     }
     Ok(())
 }
@@ -166,7 +166,7 @@ fn config_event_window<C: Connection>(
     let aux = ConfigureWindowAux::from_configure_request(&event)
         .sibling(None)
         .stack_mode(None);
-    println!("configuring window: {}",event.window);
+    println!("configuring window: {}", event.window);
     wm_state.connection.configure_window(event.window, &aux)?;
     Ok(())
 }
@@ -207,4 +207,33 @@ fn get_config_from_window_properties(
         sibling: None,
         stack_mode: mode,
     }
+}
+
+fn draw_bar<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    text: &[u8],
+) -> Result<(), ReplyOrIdError> {
+    wm_state.connection.clear_area(
+        false,
+        wm_state.bar.frame_window,
+        wm_state.bar.x,
+        wm_state.bar.y,
+        wm_state.bar.width,
+        wm_state.bar.height,
+    )?;
+    wm_state.connection.image_text8(
+        wm_state.bar.frame_window,
+        wm_state.graphics_context,
+        5,
+        10,
+        text,
+    )?;
+    Ok(())
+}
+
+pub fn set_font<C: Connection>(connection: &C, id_font:u32, id_graphics_context:u32,screen:&Screen,graphics_context:&CreateGCAux) -> Result<(),ReplyOrIdError> {
+    connection.open_font(id_font, b"fixed")?;
+    connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
+    connection.close_font(id_font)?;
+    Ok(())
 }
