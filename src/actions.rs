@@ -1,12 +1,14 @@
 use std::cmp::Reverse;
+use std::process::exit;
 
+use crate::state::*;
 use x11rb::connection::Connection;
+use x11rb::errors::ReplyError;
 use x11rb::errors::ReplyOrIdError;
+use x11rb::protocol::ErrorKind;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
-
-use crate::state::*;
 
 pub fn handle_event<C: Connection>(
     wm_state: &mut WindowManagerState<C>,
@@ -17,6 +19,7 @@ pub fn handle_event<C: Connection>(
         Event::UnmapNotify(event) => unmap_window(wm_state, event),
         Event::ConfigureRequest(event) => config_event_window(wm_state, event),
         Event::EnterNotify(event) => set_focus_window(wm_state, event),
+        Event::KeyPress(event) => handle_keypress(wm_state, event),
         _ => Ok(()),
     }
 }
@@ -60,6 +63,10 @@ pub fn create_and_map_window<C: Connection>(
             .background_pixel(wm_state.screen.white_pixel)
             .border_pixel(wm_state.screen.white_pixel),
     )?;
+    wm_state.connection.change_window_attributes(
+        window.window,
+        &ChangeWindowAttributesAux::new().event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+    )?;
     wm_state.connection.grab_server()?;
     wm_state
         .connection
@@ -99,6 +106,12 @@ fn unmap_window<C: Connection>(
             .connection
             .destroy_window(window.frame_window)
             .unwrap();
+
+        if wm_state.windows.len() == 1 {
+            wm_state
+                .connection
+                .set_input_focus(InputFocus::NONE, 1 as u32, CURRENT_TIME)?;
+        }
     }
     Ok(())
 }
@@ -152,7 +165,6 @@ fn set_focus_window<C: Connection>(
             )?
             .reply()?
             .value;
-        println!("bar text: {:?} event id {}", window_name, state.window);
         draw_bar(wm_state, &[])?;
         draw_bar(wm_state, window_name)?;
     }
@@ -163,11 +175,13 @@ fn config_event_window<C: Connection>(
     wm_state: &WindowManagerState<C>,
     event: ConfigureRequestEvent,
 ) -> Result<(), ReplyOrIdError> {
-    let aux = ConfigureWindowAux::from_configure_request(&event)
-        .sibling(None)
-        .stack_mode(None);
-    println!("configuring window: {}", event.window);
-    wm_state.connection.configure_window(event.window, &aux)?;
+    if let Some(_) = wm_state.find_window_by_id(event.window) {
+        let aux = ConfigureWindowAux::from_configure_request(&event)
+            .sibling(None)
+            .stack_mode(None);
+        println!("configuring window: {}", event.window);
+        wm_state.connection.configure_window(event.window, &aux)?;
+    }
     Ok(())
 }
 
@@ -175,6 +189,7 @@ pub fn config_window<C: Connection>(
     connection: &C,
     window: &WindowState,
 ) -> Result<(), ReplyOrIdError> {
+    println!("configing window");
     connection.configure_window(
         window.window,
         &ConfigureWindowAux {
@@ -231,9 +246,60 @@ fn draw_bar<C: Connection>(
     Ok(())
 }
 
-pub fn set_font<C: Connection>(connection: &C, id_font:u32, id_graphics_context:u32,screen:&Screen,graphics_context:&CreateGCAux) -> Result<(),ReplyOrIdError> {
+pub fn set_font<C: Connection>(
+    connection: &C,
+    id_font: u32,
+    id_graphics_context: u32,
+    screen: &Screen,
+    graphics_context: &CreateGCAux,
+) -> Result<(), ReplyOrIdError> {
     connection.open_font(id_font, b"fixed")?;
     connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
     connection.close_font(id_font)?;
     Ok(())
+}
+
+fn handle_keypress<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    event: KeyPressEvent,
+) -> Result<(), ReplyOrIdError> {
+    println!("handling keypress with code {} and modifier {:?}",event.detail, event.state);
+
+    if let Some(hotkey) = wm_state
+        .key_state
+        .hotkeys
+        .iter()
+        .inspect(|h|println!("hotkey code {:?} mask {:?} sym {:?}",h.code,h.mask,crate::keys::code_to_sym(&wm_state.key_state, event.detail)))
+        .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
+    {
+        (hotkey.function)();
+    }
+    Ok(())
+}
+
+pub fn become_window_manager<C: Connection>(
+    connection: &C,
+    screen: &Screen,
+) -> Result<(), ReplyError> {
+    let change = ChangeWindowAttributesAux::default().event_mask(
+        EventMask::SUBSTRUCTURE_REDIRECT
+            | EventMask::SUBSTRUCTURE_NOTIFY
+            | EventMask::KEY_PRESS
+            | EventMask::KEY_RELEASE,
+    );
+    let result = connection
+        .change_window_attributes(screen.root, &change)?
+        .check();
+    connection.set_input_focus(InputFocus::NONE, 1 as u32, CURRENT_TIME)?;
+    if let Err(ReplyError::X11Error(ref error)) = result {
+        if error.error_kind == ErrorKind::Access {
+            println!("another wm is running");
+            exit(1);
+        } else {
+            println!("became wm");
+            result
+        }
+    } else {
+        result
+    }
 }

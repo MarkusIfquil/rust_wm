@@ -1,12 +1,15 @@
 use crate::actions::*;
+use crate::keys::{Hotkey, KeyHandler};
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
+use std::process::Command;
 use std::u32;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
+use xkeysym::Keysym;
 
 type Window = u32;
 trait VecExt<T>
@@ -14,7 +17,6 @@ where
     T: Clone + PartialEq,
 {
     fn new_with(self, value: T) -> Vec<T>;
-    fn new_remove(self, value: T) -> Vec<T>;
 }
 
 impl<T> VecExt<T> for Vec<T>
@@ -23,9 +25,6 @@ where
 {
     fn new_with(self, value: T) -> Vec<T> {
         self.iter().cloned().chain(std::iter::once(value)).collect()
-    }
-    fn new_remove(self, value: T) -> Vec<T> {
-        self.iter().cloned().filter(|x| *x != value).collect()
     }
 }
 
@@ -51,6 +50,7 @@ pub struct WindowState {
     pub width: u16,
     pub height: u16,
     group: WindowGroup,
+    tag: u16,
 }
 
 impl WindowState {
@@ -67,7 +67,14 @@ impl WindowState {
             width: window_geometry.width,
             height: window_geometry.height,
             group: WindowGroup::Master,
+            tag: 1,
         }
+    }
+    fn print(&self) {
+        println!(
+            "window: id {} frame_id {} x {} y {} w {} h {} g {:?}",
+            self.window, self.frame_window, self.x, self.y, self.width, self.height, self.group
+        );
     }
 }
 
@@ -79,10 +86,10 @@ pub struct WindowManagerState<'a, C: Connection> {
     pub windows: Vec<WindowState>,
     pub bar: WindowState,
     pending_exposed_events: HashSet<Window>,
-    protocols: Atom,
-    delete_window: Atom,
     pub sequences_to_ignore: BinaryHeap<Reverse<u16>>,
     pub mode: ModeStack,
+    active_tag: u16,
+    pub key_state: KeyHandler<'a, C>,
 }
 
 type StateResult<'a, C> = Result<WindowManagerState<'a, C>, ReplyOrIdError>;
@@ -99,7 +106,24 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .font(id_font);
 
         //side effect
-        set_font(connection, id_font, id_graphics_context, screen, &graphics_context)?;
+        set_font(
+            connection,
+            id_font,
+            id_graphics_context,
+            screen,
+            &graphics_context,
+        )?;
+
+        let mut handler = KeyHandler::new(connection, screen.root)?;
+        let hotkey = Hotkey::new(
+            Keysym::Return,
+            KeyButMask::CONTROL | KeyButMask::MOD4,
+            &handler,
+            || {
+                Command::new("alacritty").spawn().expect("woah");
+            },
+        )?;
+        handler = handler.add_hotkey(hotkey)?;
 
         Ok(WindowManagerState {
             connection,
@@ -115,26 +139,21 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 width: screen.width_in_pixels,
                 height: 20,
                 group: WindowGroup::None,
+                tag: 0,
             },
             pending_exposed_events: HashSet::default(),
-            protocols: connection
-                .intern_atom(false, b"WM_PROTOCOLS")?
-                .reply()?
-                .atom,
-            delete_window: connection
-                .intern_atom(false, b"WM_DELETE_WINDOW")?
-                .reply()?
-                .atom,
             sequences_to_ignore: Default::default(),
             mode: ModeStack {
                 ratio_between_master_stack: 0.5,
                 spacing: 10,
                 border_size: 1,
             },
+            active_tag: 1,
+            key_state: handler,
         })
     }
 
-    pub fn scan_for_new_windows(self) -> Result<Self, ReplyOrIdError> {
+    pub fn scan_for_new_windows(self) -> StateResult<'a,C> {
         println!("scanning windows");
 
         Ok(self
@@ -177,32 +196,46 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         if self.sequences_to_ignore.iter().fold(false, |b, num| {
             b || num.0 == event.wire_sequence_number().unwrap()
         }) {
-            println!("ignoring event {:?}", event);
             return Ok(self);
         }
 
-        println!("Event: {:?}", event);
-
-        crate::actions::handle_event(&mut self, event.clone())?;
+        //side effect
+        match crate::actions::handle_event(&mut self, event.clone()) {
+            Err(e) => {
+                eprintln!("ERROR: {e}")
+            }
+            Ok(()) => {}
+        }
 
         let state = match event {
-            Event::UnmapNotify(e) => self.handle_unmap_notify(e),
-            Event::MapRequest(e) => self.handle_map_request(e),
-            Event::Expose(e) => self.handle_expose(e),
-            _ => Ok(self),
-        }?;
-        state.print_state();
+            Event::UnmapNotify(e) => {
+                let s = self.handle_unmap_notify(e)?;
+                s.print_state();
+                s
+            }
+            Event::MapRequest(e) => {
+                let s = self.handle_map_request(e)?;
+                s.print_state();
+                s
+            }
+            Event::Expose(e) => self.handle_expose(e)?,
+            Event::Error(e) => {
+                println!("GOT ERROR: {e:?}");
+                self
+            }
+            _ => self,
+        };
 
         Ok(state.clear_ignored_sequences())
     }
 
     fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
-        println!("unmapping window {:?}", event.window);
+        println!("got request to unmap window: {}", event.window);
         let state = Self {
             windows: self
                 .windows
                 .iter()
-                .filter(|w| w.window == event.window)
+                .filter(|w| w.window != event.window)
                 .map(|x| *x)
                 .collect(),
             ..self
@@ -211,10 +244,12 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn handle_map_request(self, event: MapRequestEvent) -> Result<Self, ReplyOrIdError> {
+        println!("got request to map window: {}", event.window);
         self.manage_new_window(event.window)
     }
 
     fn handle_expose(self, event: ExposeEvent) -> Result<Self, ReplyOrIdError> {
+        println!("got request to expose window: {}", event.window);
         Ok(Self {
             pending_exposed_events: {
                 let mut p = self.pending_exposed_events.clone();
@@ -227,7 +262,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
 
     fn print_state(&self) {
         println!("Manager state:");
-        println!("windows: {:?}", self.windows);
+        self.windows.iter().for_each(|w| w.print());
     }
 
     fn add_window(self, window: WindowState) -> Self {
@@ -299,13 +334,14 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
         let stack_count = self
             .windows
             .iter()
-            .filter(|w| w.group == WindowGroup::Stack)
+            .filter(|w| w.group == WindowGroup::Stack && w.tag == self.active_tag)
             .count();
 
         Ok(Self {
             windows: self
                 .windows
                 .iter()
+                .filter(|w| w.tag == self.active_tag)
                 .enumerate()
                 .map(|(i, w)| match w.group {
                     WindowGroup::Master => {
@@ -325,6 +361,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                                 - (self.mode.spacing * 2) as u16
                                 - self.bar.height,
                             group: WindowGroup::Master,
+                            tag: self.active_tag,
                         };
 
                         //side effect
@@ -355,6 +392,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                                     - (self.mode.spacing) as u16
                             },
                             group: WindowGroup::Stack,
+                            tag: self.active_tag,
                         };
 
                         //side effect
