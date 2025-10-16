@@ -7,20 +7,25 @@ use x11rb::{
 };
 use xkeysym::{KeyCode, Keysym, keysym};
 
+pub enum HotkeyAction {
+    SpawnAlacritty,
+    ExitFocusedWindow,
+}
+
 pub struct Hotkey {
     main_key: Keysym,
     pub code: KeyCode,
     pub mask: KeyButMask,
     modifier: ModMask,
-    pub function: Box<dyn Fn() + 'static>,
+    pub action: HotkeyAction,
 }
 
 impl Hotkey {
-    pub fn new<C: Connection, F: Fn() + 'static>(
+    pub fn new<C: Connection>(
         sym: Keysym,
         mask: KeyButMask,
         handler: &KeyHandler<C>,
-        func: F,
+        action: HotkeyAction,
     ) -> Result<Self, ReplyOrIdError>
     {
         Ok(Hotkey {
@@ -28,7 +33,7 @@ impl Hotkey {
             code: sym_to_code(handler, &sym).ok_or_else(|| ReplyOrIdError::IdsExhausted)?,
             mask: mask,
             modifier: ModMask::from(mask.bits()),
-            function: Box::new(func),
+            action: action,
         })
     }
 }

@@ -1,10 +1,8 @@
 use crate::actions::*;
-use crate::keys::{Hotkey, KeyHandler};
+use crate::keys::{Hotkey, HotkeyAction, KeyHandler};
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
-use std::process::Command;
-use std::u32;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::Event;
@@ -114,16 +112,7 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             &graphics_context,
         )?;
 
-        let mut handler = KeyHandler::new(connection, screen.root)?;
-        let hotkey = Hotkey::new(
-            Keysym::Return,
-            KeyButMask::CONTROL | KeyButMask::MOD4,
-            &handler,
-            || {
-                Command::new("alacritty").spawn().expect("woah");
-            },
-        )?;
-        handler = handler.add_hotkey(hotkey)?;
+        let handler = KeyHandler::new(connection, screen.root)?;
 
         Ok(WindowManagerState {
             connection,
@@ -150,10 +139,33 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             },
             active_tag: 1,
             key_state: handler,
-        })
+        }
+        .add_hotkeys()?)
     }
 
-    pub fn scan_for_new_windows(self) -> StateResult<'a,C> {
+    fn add_hotkeys(self) -> Result<Self, ReplyOrIdError> {
+        let hotkeys = [
+            Hotkey::new(
+                Keysym::Return,
+                KeyButMask::CONTROL | KeyButMask::MOD4,
+                &self.key_state,
+                HotkeyAction::SpawnAlacritty,
+            )?,
+            Hotkey::new(
+                Keysym::q,
+                KeyButMask::MOD4,
+                &self.key_state,
+                HotkeyAction::ExitFocusedWindow,
+            )?,
+        ];
+
+        Ok(hotkeys.into_iter().fold(self, move |acc, h| Self {
+            key_state: acc.key_state.add_hotkey(h).unwrap(),
+            ..acc
+        }))
+    }
+
+    pub fn scan_for_new_windows(self) -> StateResult<'a, C> {
         println!("scanning windows");
 
         Ok(self

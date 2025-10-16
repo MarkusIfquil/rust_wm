@@ -11,14 +11,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, screen_num) = x11rb::connect(None)?;
     let mut wm_state = WindowManagerState::new(&connection, screen_num)?;
     become_window_manager(&connection, wm_state.screen)?;
-    // connection.grab_key(
-    //     true,
-    //     wm_state.screen.root,
-    //     ModMask::M4,
-    //     46,
-    //     GrabMode::ASYNC,
-    //     GrabMode::ASYNC,
-    // )?;
     
     let bar = wm_state.bar;
     create_and_map_window(&mut wm_state, &bar)?;

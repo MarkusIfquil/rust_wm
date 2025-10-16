@@ -1,6 +1,8 @@
 use std::cmp::Reverse;
+use std::process::Command;
 use std::process::exit;
 
+use crate::keys::HotkeyAction;
 use crate::state::*;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
@@ -16,7 +18,7 @@ pub fn handle_event<C: Connection>(
 ) -> Result<(), ReplyOrIdError> {
     match event {
         Event::MapRequest(event) => handle_map(wm_state, event),
-        Event::UnmapNotify(event) => unmap_window(wm_state, event),
+        Event::UnmapNotify(event) => handle_unmap_notify(wm_state, event),
         Event::ConfigureRequest(event) => config_event_window(wm_state, event),
         Event::EnterNotify(event) => set_focus_window(wm_state, event),
         Event::KeyPress(event) => handle_keypress(wm_state, event),
@@ -83,11 +85,19 @@ pub fn create_and_map_window<C: Connection>(
     Ok(())
 }
 
-fn unmap_window<C: Connection>(
+fn handle_unmap_notify<C: Connection>(
     wm_state: &WindowManagerState<C>,
     event: UnmapNotifyEvent,
 ) -> Result<(), ReplyOrIdError> {
-    if let Some(window) = wm_state.find_window_by_id(event.window) {
+    unmap_window(wm_state, event.window)?;
+    Ok(())
+}
+
+pub fn unmap_window<C: Connection>(
+    wm_state: &WindowManagerState<C>,
+    window: Window,
+) -> Result<(), ReplyOrIdError> {
+    if let Some(window) = wm_state.find_window_by_id(window) {
         println!("unmapping window: {}", window.window);
         wm_state
             .connection
@@ -263,16 +273,34 @@ fn handle_keypress<C: Connection>(
     wm_state: &WindowManagerState<C>,
     event: KeyPressEvent,
 ) -> Result<(), ReplyOrIdError> {
-    println!("handling keypress with code {} and modifier {:?}",event.detail, event.state);
+    // println!(
+        // "handling keypress with code {} and modifier {:?}",
+        // event.detail, event.state
+    // );
 
     if let Some(hotkey) = wm_state
         .key_state
         .hotkeys
         .iter()
-        .inspect(|h|println!("hotkey code {:?} mask {:?} sym {:?}",h.code,h.mask,crate::keys::code_to_sym(&wm_state.key_state, event.detail)))
+        .inspect(|h| {
+            // println!(
+                // "hotkey code {:?} mask {:?} sym {:?}",
+                // h.code,
+                // h.mask,
+                // crate::keys::code_to_sym(&wm_state.key_state, event.detail)
+            // )
+        })
         .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
     {
-        (hotkey.function)();
+        match hotkey.action {
+            HotkeyAction::SpawnAlacritty => {
+                Command::new("alacritty").spawn().expect("woah");
+            }
+            HotkeyAction::ExitFocusedWindow => {
+                let focused_window = wm_state.connection.get_input_focus()?.reply()?;
+                wm_state.connection.kill_client(focused_window.focus)?;
+            }
+        }
     }
     Ok(())
 }
