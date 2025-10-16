@@ -1,5 +1,5 @@
 use crate::actions::*;
-use crate::keys::{Hotkey, HotkeyAction, KeyHandler};
+use crate::keys::{Hotkey, KeyHandler};
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
@@ -7,7 +7,6 @@ use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
-use xkeysym::Keysym;
 
 type Window = u32;
 trait VecExt<T>
@@ -139,26 +138,10 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             },
             active_tag: 1,
             key_state: handler,
-        }
-        .add_hotkeys()?)
+        })
     }
 
-    fn add_hotkeys(self) -> Result<Self, ReplyOrIdError> {
-        let hotkeys = [
-            Hotkey::new(
-                Keysym::Return,
-                KeyButMask::CONTROL | KeyButMask::MOD4,
-                &self.key_state,
-                HotkeyAction::SpawnAlacritty,
-            )?,
-            Hotkey::new(
-                Keysym::q,
-                KeyButMask::MOD4,
-                &self.key_state,
-                HotkeyAction::ExitFocusedWindow,
-            )?,
-        ];
-
+    pub fn add_hotkeys(self, hotkeys: Vec<Hotkey>) -> Result<Self, ReplyOrIdError> {
         Ok(hotkeys.into_iter().fold(self, move |acc, h| Self {
             key_state: acc.key_state.add_hotkey(h).unwrap(),
             ..acc
@@ -187,13 +170,9 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .fold(self, |s, window| s.manage_new_window(*window).unwrap()))
     }
 
-    pub fn refresh(self) -> Result<Self, ReplyOrIdError> {
+    pub fn clear_exposed_events(self) -> Result<Self, ReplyOrIdError> {
         Ok(Self {
-            pending_exposed_events: {
-                let mut p = self.pending_exposed_events;
-                p.clear();
-                p
-            },
+            pending_exposed_events: HashSet::new(),
             ..self
         })
     }
@@ -204,19 +183,11 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
             .find(|x| x.window == window || x.frame_window == window)
     }
 
-    pub fn handle_event(mut self, event: Event) -> Result<Self, ReplyOrIdError> {
+    pub fn handle_event(self, event: Event) -> Result<Self, ReplyOrIdError> {
         if self.sequences_to_ignore.iter().fold(false, |b, num| {
             b || num.0 == event.wire_sequence_number().unwrap()
         }) {
             return Ok(self);
-        }
-
-        //side effect
-        match crate::actions::handle_event(&mut self, event.clone()) {
-            Err(e) => {
-                eprintln!("ERROR: {e}")
-            }
-            Ok(()) => {}
         }
 
         let state = match event {
@@ -242,8 +213,8 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
     }
 
     fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
-        println!("got request to unmap window: {}", event.window);
-        let state = Self {
+        println!("state unmap: {}", event.window);
+        Self {
             windows: self
                 .windows
                 .iter()
@@ -251,17 +222,18 @@ impl<'a, C: Connection> WindowManagerState<'a, C> {
                 .map(|x| *x)
                 .collect(),
             ..self
-        };
-        state.set_last_master_others_stack().tile_windows()
+        }
+        .set_last_master_others_stack()
+        .tile_windows()
     }
 
     fn handle_map_request(self, event: MapRequestEvent) -> Result<Self, ReplyOrIdError> {
-        println!("got request to map window: {}", event.window);
+        println!("state map: {}", event.window);
         self.manage_new_window(event.window)
     }
 
     fn handle_expose(self, event: ExposeEvent) -> Result<Self, ReplyOrIdError> {
-        println!("got request to expose window: {}", event.window);
+        println!("state expose: {}", event.window);
         Ok(Self {
             pending_exposed_events: {
                 let mut p = self.pending_exposed_events.clone();

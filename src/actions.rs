@@ -274,22 +274,22 @@ fn handle_keypress<C: Connection>(
     event: KeyPressEvent,
 ) -> Result<(), ReplyOrIdError> {
     // println!(
-        // "handling keypress with code {} and modifier {:?}",
-        // event.detail, event.state
+    // "handling keypress with code {} and modifier {:?}",
+    // event.detail, event.state
     // );
 
     if let Some(hotkey) = wm_state
         .key_state
         .hotkeys
         .iter()
-        .inspect(|h| {
+        // .inspect(|h| {
             // println!(
-                // "hotkey code {:?} mask {:?} sym {:?}",
-                // h.code,
-                // h.mask,
-                // crate::keys::code_to_sym(&wm_state.key_state, event.detail)
+            // "hotkey code {:?} mask {:?} sym {:?}",
+            // h.code,
+            // h.mask,
+            // crate::keys::code_to_sym(&wm_state.key_state, event.detail)
             // )
-        })
+        // })
         .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
     {
         match hotkey.action {
@@ -297,8 +297,9 @@ fn handle_keypress<C: Connection>(
                 Command::new("alacritty").spawn().expect("woah");
             }
             HotkeyAction::ExitFocusedWindow => {
-                let focused_window = wm_state.connection.get_input_focus()?.reply()?;
-                wm_state.connection.kill_client(focused_window.focus)?;
+                wm_state
+                    .connection
+                    .kill_client(wm_state.connection.get_input_focus()?.reply()?.focus)?;
             }
         }
     }
