@@ -10,10 +10,11 @@ use xkeysym::{KeyCode, Keysym, keysym};
 pub enum HotkeyAction {
     SpawnAlacritty,
     ExitFocusedWindow,
+    SwitchTag(u16),
 }
 
 pub struct Hotkey {
-    main_key: Keysym,
+    pub main_key: Keysym,
     pub code: KeyCode,
     pub mask: KeyButMask,
     modifier: ModMask,
@@ -30,7 +31,7 @@ impl Hotkey {
     {
         Ok(Hotkey {
             main_key: sym,
-            code: sym_to_code(handler, &sym).ok_or_else(|| ReplyOrIdError::IdsExhausted)?,
+            code: sym_to_code(handler, &sym).unwrap(),
             mask: mask,
             modifier: ModMask::from(mask.bits()),
             action: action,

@@ -12,35 +12,43 @@ use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 
-pub fn handle_event<C: Connection>(
-    wm_state: &mut WindowManagerState<C>,
-    event: Event,
-) -> Result<(), ReplyOrIdError> {
+type Res<'a, C> = Result<WindowManagerState<'a, C>, ReplyOrIdError>;
+
+pub fn handle_event<C: Connection>(wm_state: WindowManagerState<C>, event: Event) -> Res<C> {
     match event {
         Event::MapRequest(event) => handle_map(wm_state, event),
-        Event::UnmapNotify(event) => handle_unmap_notify(wm_state, event),
-        Event::ConfigureRequest(event) => config_event_window(wm_state, event),
-        Event::EnterNotify(event) => set_focus_window(wm_state, event),
+        Event::UnmapNotify(event) => {
+            handle_unmap_notify(&wm_state, event)?;
+            Ok(wm_state)
+        }
+        Event::ConfigureRequest(event) => {
+            config_event_window(&wm_state, event)?;
+            Ok(wm_state)
+        }
+        Event::EnterNotify(event) => {
+            set_focus_window(&wm_state, event)?;
+            Ok(wm_state)
+        }
         Event::KeyPress(event) => handle_keypress(wm_state, event),
-        _ => Ok(()),
+        _ => Ok(wm_state),
     }
 }
 
-fn handle_map<C: Connection>(
-    wm_state: &mut WindowManagerState<C>,
-    event: MapRequestEvent,
-) -> Result<(), ReplyOrIdError> {
-    if let Some(window) = wm_state.find_window_by_id(event.window) {
-        let window = *window;
-        create_and_map_window(wm_state, &window)?;
-    }
-    Ok(())
+fn handle_map<C: Connection>(wm_state: WindowManagerState<C>, event: MapRequestEvent) -> Res<C> {
+    Ok(
+        if let Some(window) = wm_state.find_window_by_id(event.window) {
+            let window = *window;
+            create_and_map_window(wm_state, &window)?
+        } else {
+            wm_state
+        },
+    )
 }
 
-pub fn create_and_map_window<C: Connection>(
-    wm_state: &mut WindowManagerState<C>,
+pub fn create_and_map_window<'a, C: Connection>(
+    mut wm_state: WindowManagerState<'a, C>,
     window: &WindowState,
-) -> Result<(), ReplyOrIdError> {
+) -> Res<'a, C> {
     println!("creating window: {}", window.window);
     wm_state.connection.create_window(
         COPY_DEPTH_FROM_PARENT,
@@ -82,7 +90,7 @@ pub fn create_and_map_window<C: Connection>(
     wm_state
         .sequences_to_ignore
         .push(Reverse(cookie.sequence_number() as u16));
-    Ok(())
+    Ok(wm_state)
 }
 
 fn handle_unmap_notify<C: Connection>(
@@ -98,6 +106,10 @@ pub fn unmap_window<C: Connection>(
     window: Window,
 ) -> Result<(), ReplyOrIdError> {
     if let Some(window) = wm_state.find_window_by_id(window) {
+        if !wm_state.get_active_window_group().contains(window) {
+            println!("tried unmapping non active window");
+            return Ok(());
+        }
         println!("unmapping window: {}", window.window);
         wm_state
             .connection
@@ -117,7 +129,7 @@ pub fn unmap_window<C: Connection>(
             .destroy_window(window.frame_window)
             .unwrap();
 
-        if wm_state.windows.len() == 1 {
+        if wm_state.get_active_window_group().len() == 1 {
             wm_state
                 .connection
                 .set_input_focus(InputFocus::NONE, 1 as u32, CURRENT_TIME)?;
@@ -131,13 +143,17 @@ fn set_focus_window<C: Connection>(
     event: EnterNotifyEvent,
 ) -> Result<(), ReplyOrIdError> {
     if let Some(state) = wm_state.find_window_by_id(event.event) {
+        if !wm_state.get_active_window_group().contains(state) {
+            println!("tried setting focus of unmapped window");
+            return Ok(());
+        }
         println!("setting focus to: {:?}", state.window);
         // Set the input focus (ignoring ICCCM's WM_PROTOCOLS / WM_TAKE_FOCUS)
         wm_state
             .connection
             .set_input_focus(InputFocus::PARENT, state.window, CURRENT_TIME)?;
 
-        wm_state.windows.iter().for_each(|w| {
+        wm_state.get_active_window_group().iter().for_each(|w| {
             wm_state
                 .connection
                 .configure_window(
@@ -270,25 +286,23 @@ pub fn set_font<C: Connection>(
 }
 
 fn handle_keypress<C: Connection>(
-    wm_state: &WindowManagerState<C>,
+    mut wm_state: WindowManagerState<C>,
     event: KeyPressEvent,
-) -> Result<(), ReplyOrIdError> {
-    // println!(
-    // "handling keypress with code {} and modifier {:?}",
-    // event.detail, event.state
-    // );
+) -> Res<C> {
+    println!(
+        "handling keypress with code {} and modifier {:?}",
+        event.detail, event.state
+    );
 
     if let Some(hotkey) = wm_state
         .key_state
         .hotkeys
         .iter()
         // .inspect(|h| {
-            // println!(
-            // "hotkey code {:?} mask {:?} sym {:?}",
-            // h.code,
-            // h.mask,
-            // crate::keys::code_to_sym(&wm_state.key_state, event.detail)
-            // )
+        //     println!(
+        //         "hotkey code {:?} mask {:?} sym {:?}",
+        //         h.code, h.mask, h.main_key
+        //     )
         // })
         .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
     {
@@ -301,9 +315,13 @@ fn handle_keypress<C: Connection>(
                     .connection
                     .kill_client(wm_state.connection.get_input_focus()?.reply()?.focus)?;
             }
+            HotkeyAction::SwitchTag(n) => {
+                println!("switching to tag {n}");
+                wm_state = wm_state.change_active_tag(n).unwrap();
+            }
         }
     }
-    Ok(())
+    Ok(wm_state)
 }
 
 pub fn become_window_manager<C: Connection>(
