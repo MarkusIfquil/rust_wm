@@ -42,10 +42,10 @@ impl Hotkey {
 pub struct KeyHandler<'a, C: Connection> {
     connection: &'a C,
     root: Window,
-    pub hotkeys: Vec<Hotkey>,
     mapping: GetKeyboardMappingReply,
     min_code: u8,
     max_code: u8,
+    pub hotkeys: Vec<Hotkey>,
 }
 
 impl<'a, C: Connection> KeyHandler<'a, C> {
