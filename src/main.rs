@@ -2,9 +2,6 @@ mod actions;
 mod keys;
 mod state;
 
-// use std::thread;
-// use std::time::Duration;
-
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::KeyButMask;
 use xkeysym::Keysym;
@@ -68,7 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // println!("got event {:?}", event);
             handler.handle_event(&wm_state, event.clone())?;
             wm_state = wm_state.handle_event(event.clone())?;
-            // thread::sleep(Duration::from_millis(200));
             event_as_option = connection.poll_for_event()?;
         }
     }

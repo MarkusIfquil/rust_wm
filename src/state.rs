@@ -146,6 +146,10 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     pub fn change_active_tag(self, tag: u16) -> Result<Self, ReplyOrIdError> {
+        if self.active_tag == tag {
+            println!("tried switching to already active tag");
+            return Ok(self);
+        }
         let old_tag = self.active_tag;
         let new_self = Self {
             active_tag: tag,
@@ -155,7 +159,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         new_self.connection_handler.set_focus_to_root()?;
         new_self.redraw_tag()
     }
-    
+
     pub fn get_active_window_group(&self) -> &Vec<WindowState> {
         self.windows
             .iter()
@@ -244,12 +248,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .key_handler
             .hotkeys
             .iter()
-            // .inspect(|h| {
-            //     println!(
-            //         "hotkey code {:?} mask {:?} sym {:?}",
-            //         h.code, h.mask, h.main_key
-            //     )
-            // })
             .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
         {
             match hotkey.action {
@@ -301,10 +299,13 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         //side effect
         self.connection_handler.create_frame_of_window(&window)?;
 
-        let new_self = self.add_window(window)
+        let new_self = self
+            .add_window(window)
             .set_last_master_others_stack()
             .tile_windows()?;
-        new_self.connection_handler.set_focus_window(&new_self, window.window)?;
+        new_self
+            .connection_handler
+            .set_focus_window(&new_self, window.window)?;
 
         Ok(new_self)
     }
@@ -445,5 +446,4 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             v.iter().for_each(|w| w.print());
         });
     }
-
 }

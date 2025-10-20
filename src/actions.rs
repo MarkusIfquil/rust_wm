@@ -31,6 +31,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .font(id_font);
 
         connection.open_font(id_font, b"fixed")?;
+        println!("got fonts");
+        connection.list_fonts(100, b"*")?.reply()?.names.iter().for_each(|n|println!("{:?}",String::from_utf8(n.name.clone()).unwrap()));
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
         connection.close_font(id_font)?;
 
