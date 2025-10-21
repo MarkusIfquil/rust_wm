@@ -1,4 +1,5 @@
 use crate::actions::*;
+use crate::config::Config;
 use crate::keys::{Hotkey, HotkeyAction, KeyHandler};
 
 use std::cmp::Reverse;
@@ -63,7 +64,6 @@ impl WindowState {
             .unwrap()
             .reply()
             .unwrap();
-
         WindowState {
             window,
             frame_window,
@@ -98,6 +98,8 @@ type Res = Result<(), ReplyOrIdError>;
 
 impl<'a, C: Connection> ManagerState<'a, C> {
     pub fn new(handler: &'a ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
+        let config = Config::new();
+
         Ok(ManagerState {
             windows: (1..=9).map(|x| (x as u16, Vec::new())).collect(),
             bar: WindowState {
@@ -106,16 +108,16 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 x: 0,
                 y: 0,
                 width: handler.screen.width_in_pixels,
-                height: 20,
+                height: config.bar_height,
                 group: WindowGroup::None,
                 tag: 0,
             },
             pending_exposed_events: HashSet::default(),
             sequences_to_ignore: Default::default(),
             mode: ModeStack {
-                ratio_between_master_stack: 0.5,
-                spacing: 10,
-                border_size: 1,
+                ratio_between_master_stack: config.ratio,
+                spacing: config.spacing as i16,
+                border_size: config.border_size as i16,
             },
             active_tag: 1,
             key_handler: KeyHandler::new(handler.connection, handler.screen.root)?,

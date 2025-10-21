@@ -1,5 +1,6 @@
 use std::process::exit;
 
+use crate::config::Config;
 use crate::state::*;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::CURRENT_TIME;
@@ -12,27 +13,43 @@ use x11rb::protocol::xproto::*;
 
 type Res = Result<(), ReplyOrIdError>;
 
+fn hex_color_to_rgb(hex: String) -> (u16, u16, u16) {
+    (
+        u16::from_str_radix(&hex[1..3], 16).unwrap() * 257,
+        u16::from_str_radix(&hex[3..5], 16).unwrap() * 257,
+        u16::from_str_radix(&hex[5..7], 16).unwrap() * 257,
+    )
+}
+
 pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
     pub screen_num: usize,
     pub id_graphics_context: Gcontext,
+    graphics: (u32, u32, u32),
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
     pub fn new(connection: &'a C, screen_num: usize) -> Result<Self, ReplyOrIdError> {
+        let config = Config::new();
         let screen = &connection.setup().roots[screen_num];
         let id_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
+
+        let (r,g,b) = hex_color_to_rgb(config.main_color);
+        let main_color = connection.alloc_color(screen.default_colormap, r, g, b)?.reply()?.pixel;
+        let (r,g,b) = hex_color_to_rgb(config.secondary_color);
+        let secondary_color = connection.alloc_color(screen.default_colormap, r, g, b)?.reply()?.pixel;
+
         let graphics_context = CreateGCAux::new()
             .graphics_exposures(0)
-            .background(screen.white_pixel)
-            .foreground(screen.black_pixel)
+            .background(main_color)
+            .foreground(secondary_color)
             .font(id_font);
 
         connection.open_font(id_font, b"fixed")?;
-        println!("got fonts");
-        connection.list_fonts(100, b"*")?.reply()?.names.iter().for_each(|n|println!("{:?}",String::from_utf8(n.name.clone()).unwrap()));
+        // println!("got fonts");
+        // connection.list_fonts(100, b"*")?.reply()?.names.iter().for_each(|n|println!("{:?}",String::from_utf8(n.name.clone()).unwrap()));
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
         connection.close_font(id_font)?;
 
@@ -41,6 +58,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             screen,
             screen_num,
             id_graphics_context,
+            graphics: (main_color,secondary_color,id_font),
         })
     }
 
@@ -107,8 +125,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                         | EventMask::POINTER_MOTION
                         | EventMask::ENTER_WINDOW,
                 )
-                .background_pixel(self.screen.white_pixel)
-                .border_pixel(self.screen.white_pixel),
+                .background_pixel(self.graphics.0)
+                .border_pixel(self.graphics.1),
         )?;
 
         self.connection.grab_server()?;
@@ -161,14 +179,14 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 )?;
                 self.connection.change_window_attributes(
                     w.frame_window,
-                    &ChangeWindowAttributesAux::new().border_pixel(self.screen.black_pixel),
+                    &ChangeWindowAttributesAux::new().border_pixel(self.graphics.0),
                 )?;
                 Ok::<(), ReplyOrIdError>(())
             })?;
 
         self.connection.change_window_attributes(
             wm_state.find_window_by_id(window).unwrap().frame_window,
-            &ChangeWindowAttributesAux::new().border_pixel(self.screen.white_pixel),
+            &ChangeWindowAttributesAux::new().border_pixel(self.graphics.1),
         )?;
 
         let bar_text = format!("{} {}", wm_state.active_tag, self.get_window_name(window)?);
@@ -271,7 +289,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             0,
             WindowClass::INPUT_OUTPUT,
             0,
-            &CreateWindowAux::new().background_pixel(self.screen.white_pixel),
+            &CreateWindowAux::new().background_pixel(self.graphics.0),
         )?;
         // self.map(window)?;
         Ok(())

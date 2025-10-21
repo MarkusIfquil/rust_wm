@@ -1,6 +1,7 @@
 mod actions;
 mod keys;
 mod state;
+mod config;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::KeyButMask;
