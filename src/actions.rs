@@ -36,10 +36,16 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let id_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
 
-        let (r,g,b) = hex_color_to_rgb(config.main_color);
-        let main_color = connection.alloc_color(screen.default_colormap, r, g, b)?.reply()?.pixel;
-        let (r,g,b) = hex_color_to_rgb(config.secondary_color);
-        let secondary_color = connection.alloc_color(screen.default_colormap, r, g, b)?.reply()?.pixel;
+        let (r, g, b) = hex_color_to_rgb(config.main_color);
+        let main_color = connection
+            .alloc_color(screen.default_colormap, r, g, b)?
+            .reply()?
+            .pixel;
+        let (r, g, b) = hex_color_to_rgb(config.secondary_color);
+        let secondary_color = connection
+            .alloc_color(screen.default_colormap, r, g, b)?
+            .reply()?
+            .pixel;
 
         let graphics_context = CreateGCAux::new()
             .graphics_exposures(0)
@@ -47,7 +53,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(secondary_color)
             .font(id_font);
 
-        connection.open_font(id_font, b"fixed")?;
+        connection.open_font(id_font, b"6x13")?;
         // println!("got fonts");
         // connection.list_fonts(100, b"*")?.reply()?.names.iter().for_each(|n|println!("{:?}",String::from_utf8(n.name.clone()).unwrap()));
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
@@ -58,7 +64,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             screen,
             screen_num,
             id_graphics_context,
-            graphics: (main_color,secondary_color,id_font),
+            graphics: (main_color, secondary_color, id_font),
         })
     }
 
@@ -189,8 +195,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             &ChangeWindowAttributesAux::new().border_pixel(self.graphics.1),
         )?;
 
-        let bar_text = format!("{} {}", wm_state.active_tag, self.get_window_name(window)?);
-        self.draw_bar(&wm_state.bar, &bar_text)?;
+        self.draw_bar(wm_state, Some(window))?;
         Ok(())
     }
 
@@ -319,15 +324,82 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         .unwrap())
     }
 
-    fn draw_bar(&self, bar: &WindowState, text: &str) -> Res {
+    pub fn draw_bar(&self, wm_state: &ManagerState<C>, active_window: Option<Window>) -> Res {
+        let bar_text = if let Some(window) = active_window {
+            self.get_window_name(window)?
+        } else {
+            "".to_owned()
+        };
+        self.connection.clear_area(
+            false,
+            wm_state.bar.window,
+            wm_state.bar.x,
+            wm_state.bar.y,
+            wm_state.bar.width,
+            wm_state.bar.height,
+        )?;
+
+        let inverted_gc = CreateGCAux::new()
+            .background(self.graphics.1)
+            .foreground(self.graphics.0);
+        let inverted_gc_id = self.connection.generate_id()?;
         self.connection
-            .clear_area(false, bar.window, bar.x, bar.y, bar.width, bar.height)?;
-        self.connection.image_text8(
-            bar.window,
+            .create_gc(inverted_gc_id, wm_state.bar.window, &inverted_gc)?;
+
+        let rect_x = (wm_state.bar.height * 3 / 2) as i16;
+        self.connection.poly_fill_rectangle(
+            wm_state.bar.window,
+            inverted_gc_id,
+            &(1..=9)
+                .filter(|x| *x != wm_state.active_tag)
+                .map(|x| Rectangle {
+                    x: rect_x * (x-1) as i16,
+                    y: 0,
+                    width: wm_state.bar.height,
+                    height: wm_state.bar.height,
+                })
+                .inspect(|x| println!("{} {} {} {}", x.x, x.y, x.width, x.height))
+                .collect::<Vec<_>>(),
+        )?;
+
+        self.connection.poly_fill_rectangle(
+            wm_state.bar.window,
             self.id_graphics_context,
-            5,
-            10,
-            text.as_bytes(),
+            &[Rectangle {
+                x: rect_x * (wm_state.active_tag - 1) as i16,
+                y: 0,
+                width: wm_state.bar.height,
+                height: wm_state.bar.height,
+            }],
+        )?;
+
+        (1..=9).try_for_each(|x| {
+            if x == wm_state.active_tag {
+                self.connection.image_text8(
+                    wm_state.bar.window,
+                    inverted_gc_id,
+                    rect_x * (x as i16 - 1) + (wm_state.bar.height / 2 - 3) as i16,
+                    13,
+                    x.to_string().as_bytes(),
+                )?;
+            } else {
+                self.connection.image_text8(
+                    wm_state.bar.window,
+                    self.id_graphics_context,
+                    rect_x * (x as i16 - 1) + (wm_state.bar.height / 2 - 3) as i16,
+                    13,
+                    x.to_string().as_bytes(),
+                )?;
+            }
+            Ok::<(), ReplyOrIdError>(())
+        })?;
+
+        self.connection.image_text8(
+            wm_state.bar.window,
+            self.id_graphics_context,
+            wm_state.bar.height as i16 * 14,
+            13,
+            bar_text.as_bytes(),
         )?;
         Ok(())
     }

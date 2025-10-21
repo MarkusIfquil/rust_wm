@@ -1,7 +1,7 @@
 mod actions;
+mod config;
 mod keys;
 mod state;
-mod config;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::KeyButMask;
@@ -45,6 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     handler.create_bar_window(wm_state.bar.window)?;
     handler.create_frame_of_window(&wm_state.bar)?;
+    handler.draw_bar(&wm_state, None)?;
+
     wm_state = wm_state
         .scan_for_new_windows()?
         .add_hotkeys(hotkeys.into())?;

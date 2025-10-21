@@ -6,13 +6,13 @@ use x11rb::{
     },
 };
 use xkeysym::{KeyCode, Keysym, keysym};
-
+#[derive(Debug)]
 pub enum HotkeyAction {
     SpawnAlacritty,
     ExitFocusedWindow,
     SwitchTag(u16),
 }
-
+#[derive(Debug)]
 pub struct Hotkey {
     pub main_key: Keysym,
     pub code: KeyCode,

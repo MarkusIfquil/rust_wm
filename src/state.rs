@@ -245,6 +245,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
         );
+        // println!("{:?}",self.key_handler.hotkeys);
 
         if let Some(hotkey) = self
             .key_handler
@@ -252,6 +253,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .iter()
             .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
         {
+            println!("YAY");
             match hotkey.action {
                 HotkeyAction::SpawnAlacritty => {
                     Command::new("alacritty").spawn().expect("woah");
@@ -431,6 +433,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.get_active_window_group()
             .iter()
             .try_for_each(|w| self.connection_handler.map(w))?;
+        self.connection_handler.draw_bar(&self,None)?;
         self.tile_windows()
     }
 
