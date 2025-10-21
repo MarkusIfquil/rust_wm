@@ -6,9 +6,9 @@ use x11rb::{
     },
 };
 use xkeysym::{KeyCode, Keysym, keysym};
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum HotkeyAction {
-    SpawnAlacritty,
+    Spawn(String),
     ExitFocusedWindow,
     SwitchTag(u16),
 }

@@ -240,40 +240,49 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         })
     }
 
-    fn handle_keypress(mut self, event: KeyPressEvent) -> Result<Self, ReplyOrIdError> {
+    fn handle_keypress(self, event: KeyPressEvent) -> Result<Self, ReplyOrIdError> {
         println!(
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
         );
         // println!("{:?}",self.key_handler.hotkeys);
 
-        if let Some(hotkey) = self
+        let hotkey = if let Some(hotkey) = self
             .key_handler
             .hotkeys
             .iter()
             .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
         {
-            println!("YAY");
-            match hotkey.action {
-                HotkeyAction::SpawnAlacritty => {
-                    Command::new("alacritty").spawn().expect("woah");
-                }
-                HotkeyAction::ExitFocusedWindow => {
-                    self.connection_handler.connection.kill_client(
-                        self.connection_handler
-                            .connection
-                            .get_input_focus()?
-                            .reply()?
-                            .focus,
-                    )?;
-                }
-                HotkeyAction::SwitchTag(n) => {
-                    println!("switching to tag {n}");
-                    self = self.change_active_tag(n).unwrap();
-                }
+            hotkey.action.clone()
+        } else {
+            println!("hotkey not found");
+            return Ok(self);
+        };
+        println!("YAY");
+        match hotkey {
+            HotkeyAction::Spawn(command) => {
+                let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
+                Command::new(parts[0].clone())
+                    .args(parts[1..].iter())
+                    .spawn()
+                    .expect("woah");
+                Ok(self)
+            }
+            HotkeyAction::ExitFocusedWindow => {
+                self.connection_handler.connection.kill_client(
+                    self.connection_handler
+                        .connection
+                        .get_input_focus()?
+                        .reply()?
+                        .focus,
+                )?;
+                Ok(self)
+            }
+            HotkeyAction::SwitchTag(n) => {
+                println!("switching to tag {n}");
+                self.change_active_tag(n)
             }
         }
-        Ok(self)
     }
 
     fn replace_vec_in_map(self, v: Vec<WindowState>) -> Result<Self, ReplyOrIdError> {
@@ -433,7 +442,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.get_active_window_group()
             .iter()
             .try_for_each(|w| self.connection_handler.map(w))?;
-        self.connection_handler.draw_bar(&self,None)?;
+        self.connection_handler.draw_bar(&self, None)?;
         self.tile_windows()
     }
 

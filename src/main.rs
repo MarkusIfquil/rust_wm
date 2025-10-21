@@ -22,13 +22,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Keysym::Return,
             KeyButMask::CONTROL | KeyButMask::MOD4,
             &wm_state.key_handler,
-            HotkeyAction::SpawnAlacritty,
+            HotkeyAction::Spawn(String::from("alacritty")),
         )?,
         Hotkey::new(
             Keysym::q,
             KeyButMask::MOD4,
             &wm_state.key_handler,
             HotkeyAction::ExitFocusedWindow,
+        )?,
+        Hotkey::new(
+            Keysym::c,
+            KeyButMask::MOD4,
+            &wm_state.key_handler,
+            HotkeyAction::Spawn(String::from("/usr/bin/rofi -show drun")),
         )?,
     ]
     .into_iter()
