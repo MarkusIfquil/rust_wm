@@ -6,6 +6,8 @@ use x11rb::{
     },
 };
 use xkeysym::{KeyCode, Keysym};
+
+use crate::config::Config;
 #[derive(Debug, Clone)]
 pub enum HotkeyAction {
     Spawn(String),
@@ -51,7 +53,7 @@ pub struct KeyHandler<'a, C: Connection> {
 
 impl<'a, C: Connection> KeyHandler<'a, C> {
     pub fn new(connection: &'a C, root: Window) -> Result<Self, ReplyOrIdError> {
-        KeyHandler {
+        Ok(KeyHandler {
             hotkeys: Vec::default(),
             mapping: connection
                 .get_keyboard_mapping(
@@ -63,52 +65,49 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
             max_code: connection.setup().max_keycode - connection.setup().min_keycode + 1,
             root,
             connection,
-        }
-        .get_hotkeys()
+        })
     }
 
-    pub fn get_registered_hotkey(&self, mask: KeyButMask, code_raw: u32) -> Result<&Hotkey,ReplyOrIdError> {
+    pub fn get_registered_hotkey(&self, mask: KeyButMask, code_raw: u32) -> Option<&Hotkey> {
         self.hotkeys
             .iter()
             .find(|h| mask == h.mask && code_raw == h.code.raw())
-            .ok_or(ReplyOrIdError::IdsExhausted)
     }
 
-    pub fn get_hotkeys(self) -> Result<Self, ReplyOrIdError> {
-        let hotkeys = vec![
-            Hotkey::new(
-                &self,
-                Keysym::Return,
-                KeyButMask::CONTROL | KeyButMask::MOD4,
-                HotkeyAction::Spawn(String::from("alacritty")),
-            ),
-            Hotkey::new(
-                &self,
-                Keysym::q,
-                KeyButMask::MOD4,
-                HotkeyAction::ExitFocusedWindow,
-            ),
-            Hotkey::new(
-                &self,
-                Keysym::c,
-                KeyButMask::MOD4,
-                HotkeyAction::Spawn(String::from("/usr/bin/rofi -show drun")),
-            ),
-        ]
-        .into_iter()
-        .chain((1..=9).map(|n| {
-            Hotkey::new(
-                &self,
-                Keysym::from_char(char::from_digit(n, 10).unwrap()),
-                KeyButMask::MOD4,
-                HotkeyAction::SwitchTag(n as u16),
-            )
-        }))
-        .collect::<Vec<_>>();
+    pub fn get_hotkeys(self, config: &Config) -> Result<Self, ReplyOrIdError> {
+        let keys = config.hotkeys.iter().map(|h| {
+            println!("got vec {h:?}");
+            let modifiers = h[0]
+                .split("|")
+                .map(|m| match m {
+                    "CONTROL" => KeyButMask::CONTROL,
+                    "SHIFT" => KeyButMask::SHIFT,
+                    "MOD" => KeyButMask::MOD4,
+                    _ => KeyButMask::default(),
+                })
+                .fold(KeyButMask::default(), |acc, m| acc | m);
+            let sym = match h[1].as_str() {
+                "Return" => Keysym::Return,
+                c => Keysym::from_char(c.chars().next().unwrap()),
+            };
+            let action = match h[2].as_str() {
+                "spawn" => HotkeyAction::Spawn(h[3].clone()),
+                "exit" => HotkeyAction::ExitFocusedWindow,
+                "switchtag" => HotkeyAction::SwitchTag(h[3].clone().parse().unwrap()),
+                _ => unimplemented!(),
+            };
 
-        hotkeys.iter().try_for_each(|h| self.listen_to_hotkey(h))?;
+            println!("{:?} {:?} {:?}",modifiers,sym,action);
 
-        Ok(Self { hotkeys, ..self })
+            Hotkey::new(&self, sym, modifiers, action)
+        }).collect::<Vec<_>>();
+
+        keys.iter().try_for_each(|h| self.listen_to_hotkey(&h))?;
+
+        Ok(Self {
+            hotkeys: keys,
+            ..self
+        })
     }
 
     pub fn code_to_sym(&self, code: u8) -> Option<Keysym> {

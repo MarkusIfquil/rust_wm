@@ -120,7 +120,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 border_size: config.border_size as i16,
             },
             active_tag: 1,
-            key_handler: KeyHandler::new(handler.connection, handler.screen.root)?,
+            key_handler: KeyHandler::new(handler.connection, handler.screen.root)?.get_hotkeys(&config)?,
             connection_handler: handler,
         })
     }
@@ -238,11 +238,14 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
         );
-        let hotkey = self
+        let hotkey = if let Some(h) = self
             .key_handler
-            .get_registered_hotkey(event.state, event.detail as u32)?
-            .action
-            .clone();
+            .get_registered_hotkey(event.state, event.detail as u32)
+        {
+            h.action.clone()
+        } else {
+            return Ok(self);
+        };
 
         match hotkey {
             HotkeyAction::Spawn(command) => {
@@ -414,11 +417,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
 
     fn clear_ignored_sequences(self) -> Self {
         Self {
-            sequences_to_ignore: {
-                let mut s = self.sequences_to_ignore;
-                s.clear();
-                s
-            },
+            sequences_to_ignore: BinaryHeap::new(),
             ..self
         }
     }

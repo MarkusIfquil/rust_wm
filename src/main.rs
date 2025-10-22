@@ -21,18 +21,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     handler.create_frame_of_window(&wm_state.bar)?;
     handler.draw_bar(&wm_state, None)?;
 
-    wm_state = wm_state
-        .scan_for_new_windows()?;
-
-    println!(
-        "screen: w{} h{}",
-        handler.screen.width_in_pixels, handler.screen.height_in_pixels
-    );
+    // wm_state = wm_state.scan_for_new_windows()?;
 
     let bar_window = wm_state.bar.clone();
     let gc = CreateGCAux::new().graphics_exposures(0).background(handler.graphics.0).foreground(handler.graphics.1);
-
-
     thread::spawn(move || {
         let (conn, _) = x11rb::connect(None).unwrap();
         let id = conn.generate_id().unwrap();
