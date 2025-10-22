@@ -26,7 +26,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
     pub screen: &'a Screen,
     pub screen_num: usize,
     pub id_graphics_context: Gcontext,
-    graphics: (u32, u32, u32),
+    pub graphics: (u32, u32, u32),
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -353,12 +353,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             &(1..=9)
                 .filter(|x| *x != wm_state.active_tag)
                 .map(|x| Rectangle {
-                    x: rect_x * (x-1) as i16,
+                    x: rect_x * (x - 1) as i16,
                     y: 0,
                     width: wm_state.bar.height,
                     height: wm_state.bar.height,
                 })
-                .inspect(|x| println!("{} {} {} {}", x.x, x.y, x.width, x.height))
+                // .inspect(|x| println!("{} {} {} {}", x.x, x.y, x.width, x.height))
                 .collect::<Vec<_>>(),
         )?;
 
@@ -401,6 +401,28 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             13,
             bar_text.as_bytes(),
         )?;
+        draw_time_on_bar(self.connection, &wm_state.bar, self.id_graphics_context);
         Ok(())
     }
+}
+
+pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, id: u32) {
+    connection
+        .clear_area(
+            false,
+            w.window,
+            w.width as i16 - 200,
+            w.y,
+            w.width,
+            w.height,
+        )
+        .unwrap();
+    let time = chrono::Local::now()
+        .format("%Y, %b %d. %a, %H:%M:%S")
+        .to_string();
+    connection
+        .image_text8(w.window, id, w.width as i16 - 200, 13, time.as_bytes())
+        .unwrap()
+        .check()
+        .expect("AAAA");
 }

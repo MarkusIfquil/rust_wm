@@ -3,14 +3,16 @@ mod config;
 mod keys;
 mod state;
 
+use std::thread;
+use std::time::Duration;
+
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::KeyButMask;
+use x11rb::protocol::xproto::{ConnectionExt, CreateGCAux, KeyButMask};
 use xkeysym::Keysym;
 
 use crate::actions::ConnectionHandler;
 use crate::keys::{Hotkey, HotkeyAction};
 use crate::state::*;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, screen_num) = x11rb::connect(None)?;
     let handler = ConnectionHandler::new(&connection, screen_num)?;
@@ -63,10 +65,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         handler.screen.width_in_pixels, handler.screen.height_in_pixels
     );
 
+    let bar_window = wm_state.bar.clone();
+    let gc = CreateGCAux::new().graphics_exposures(0).background(handler.graphics.0).foreground(handler.graphics.1);
+
+
+    thread::spawn(move || {
+        let (conn, sn) = x11rb::connect(None).unwrap();
+        let id = conn.generate_id().unwrap();
+
+        conn.create_gc(id, bar_window.window, &gc).unwrap();
+        loop {
+            actions::draw_time_on_bar(&conn, &bar_window, id);
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
     loop {
         wm_state = wm_state.clear_exposed_events()?;
         connection.flush()?;
-
         let event = connection.wait_for_event()?;
         let mut event_as_option = Some(event);
 

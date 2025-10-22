@@ -245,8 +245,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
         );
-        // println!("{:?}",self.key_handler.hotkeys);
-
         let hotkey = if let Some(hotkey) = self
             .key_handler
             .hotkeys
@@ -258,7 +256,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             println!("hotkey not found");
             return Ok(self);
         };
-        println!("YAY");
         match hotkey {
             HotkeyAction::Spawn(command) => {
                 let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
