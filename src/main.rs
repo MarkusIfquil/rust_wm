@@ -7,11 +7,9 @@ use std::thread;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt, CreateGCAux, KeyButMask};
-use xkeysym::Keysym;
+use x11rb::protocol::xproto::{ConnectionExt, CreateGCAux};
 
 use crate::actions::ConnectionHandler;
-use crate::keys::{Hotkey, HotkeyAction};
 use crate::state::*;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, screen_num) = x11rb::connect(None)?;
@@ -19,47 +17,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     handler.become_window_manager()?;
     let mut wm_state = ManagerState::new(&handler)?;
 
-    let hotkeys: Vec<Hotkey> = vec![
-        Hotkey::new(
-            Keysym::Return,
-            KeyButMask::CONTROL | KeyButMask::MOD4,
-            &wm_state.key_handler,
-            HotkeyAction::Spawn(String::from("alacritty")),
-        )?,
-        Hotkey::new(
-            Keysym::q,
-            KeyButMask::MOD4,
-            &wm_state.key_handler,
-            HotkeyAction::ExitFocusedWindow,
-        )?,
-        Hotkey::new(
-            Keysym::c,
-            KeyButMask::MOD4,
-            &wm_state.key_handler,
-            HotkeyAction::Spawn(String::from("/usr/bin/rofi -show drun")),
-        )?,
-    ]
-    .into_iter()
-    .chain((1..=9).map(|n| {
-        Hotkey::new(
-            Keysym::from_char(char::from_digit(n, 10).unwrap()),
-            KeyButMask::MOD4,
-            &wm_state.key_handler,
-            HotkeyAction::SwitchTag(n as u16),
-        )
-        .unwrap()
-    }))
-    .collect();
-
     handler.create_bar_window(wm_state.bar.window)?;
     handler.create_frame_of_window(&wm_state.bar)?;
     handler.draw_bar(&wm_state, None)?;
 
     wm_state = wm_state
-        .scan_for_new_windows()?
-        .add_hotkeys(hotkeys.into())?;
+        .scan_for_new_windows()?;
 
-    println!("screen num: {}", handler.screen.root);
     println!(
         "screen: w{} h{}",
         handler.screen.width_in_pixels, handler.screen.height_in_pixels
@@ -70,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     thread::spawn(move || {
-        let (conn, sn) = x11rb::connect(None).unwrap();
+        let (conn, _) = x11rb::connect(None).unwrap();
         let id = conn.generate_id().unwrap();
 
         conn.create_gc(id, bar_window.window, &gc).unwrap();

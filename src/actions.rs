@@ -24,7 +24,6 @@ fn hex_color_to_rgb(hex: String) -> (u16, u16, u16) {
 pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
-    pub screen_num: usize,
     pub id_graphics_context: Gcontext,
     pub graphics: (u32, u32, u32),
 }
@@ -62,7 +61,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(ConnectionHandler {
             connection,
             screen,
-            screen_num,
             id_graphics_context,
             graphics: (main_color, secondary_color, id_font),
         })

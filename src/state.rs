@@ -1,6 +1,6 @@
 use crate::actions::*;
 use crate::config::Config;
-use crate::keys::{Hotkey, HotkeyAction, KeyHandler};
+use crate::keys::{HotkeyAction, KeyHandler};
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -125,13 +125,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         })
     }
 
-    pub fn add_hotkeys(self, hotkeys: Vec<Hotkey>) -> Result<Self, ReplyOrIdError> {
-        Ok(hotkeys.into_iter().fold(self, |acc, h| Self {
-            key_handler: acc.key_handler.add_hotkey(h).unwrap(),
-            ..acc
-        }))
-    }
-
     pub fn clear_exposed_events(self) -> Result<Self, ReplyOrIdError> {
         Ok(Self {
             pending_exposed_events: HashSet::new(),
@@ -245,17 +238,12 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
         );
-        let hotkey = if let Some(hotkey) = self
+        let hotkey = self
             .key_handler
-            .hotkeys
-            .iter()
-            .find(|h| event.state == h.mask && event.detail as u32 == h.code.raw())
-        {
-            hotkey.action.clone()
-        } else {
-            println!("hotkey not found");
-            return Ok(self);
-        };
+            .get_registered_hotkey(event.state, event.detail as u32)?
+            .action
+            .clone();
+
         match hotkey {
             HotkeyAction::Spawn(command) => {
                 let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();

@@ -1,4 +1,5 @@
 use serde::Deserialize;
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub bar_height: u16,
@@ -7,6 +8,7 @@ pub struct Config {
     pub border_size: u16,
     pub main_color: String,
     pub secondary_color: String,
+    pub hotkeys: Vec<String>,
 }
 
 impl Config {
