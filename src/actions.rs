@@ -30,7 +30,10 @@ pub struct ConnectionHandler<'a, C: Connection> {
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
     pub fn new(connection: &'a C, screen_num: usize) -> Result<Self, ReplyOrIdError> {
-        let config = Config::new();
+        let config = match Config::new() {
+            Ok(c) => c,
+            Err(_) => Config::default(),
+        };
         let screen = &connection.setup().roots[screen_num];
         let id_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;

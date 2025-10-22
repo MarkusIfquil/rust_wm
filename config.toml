@@ -6,7 +6,7 @@ main_color = "#11111b"
 secondary_color = "#74c7ec"
 
 hotkeys = [
-    ["CONTROL|MOD",  "Return",    "spawn",     "alacritty"],
+    ["CONTROL|MOD",  "Return",       "spawn",     "alacritty"],
     ["MOD",          "q",            "exit",      ""],
     ["MOD",          "c",            "spawn",     "rofi -show drun"],
 

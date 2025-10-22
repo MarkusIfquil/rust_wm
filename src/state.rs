@@ -98,7 +98,10 @@ type Res = Result<(), ReplyOrIdError>;
 
 impl<'a, C: Connection> ManagerState<'a, C> {
     pub fn new(handler: &'a ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
-        let config = Config::new();
+        let config = match Config::new() {
+            Ok(c) => c,
+            Err(_) => Config::default(),
+        };
 
         Ok(ManagerState {
             windows: (1..=9).map(|x| (x as u16, Vec::new())).collect(),

@@ -12,7 +12,91 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Self {
-        toml::from_str(&std::fs::read_to_string("config.toml").unwrap()).unwrap()
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(toml::from_str(&std::fs::read_to_string("config.toml")?)?)
+    }
+    pub fn default() -> Self {
+        Config {
+            bar_height: 20,
+            spacing: 10,
+            ratio: 0.5,
+            border_size: 1,
+            main_color: String::from("#11111b"),
+            secondary_color: String::from("#74c7ec"),
+            hotkeys: vec![
+                vec![
+                    String::from("CONTROL|MOD"),
+                    String::from("Return"),
+                    String::from("spawn"),
+                    String::from("alacritty"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("q"),
+                    String::from("exit"),
+                    String::from(""),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("c"),
+                    String::from("spawn"),
+                    String::from("rofi -show drun"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("1"),
+                    String::from("switchtag"),
+                    String::from("1"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("2"),
+                    String::from("switchtag"),
+                    String::from("2"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("3"),
+                    String::from("switchtag"),
+                    String::from("3"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("4"),
+                    String::from("switchtag"),
+                    String::from("4"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("5"),
+                    String::from("switchtag"),
+                    String::from("5"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("6"),
+                    String::from("switchtag"),
+                    String::from("6"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("7"),
+                    String::from("switchtag"),
+                    String::from("7"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("8"),
+                    String::from("switchtag"),
+                    String::from("8"),
+                ],
+                vec![
+                    String::from("MOD"),
+                    String::from("9"),
+                    String::from("switchtag"),
+                    String::from("9"),
+                ],
+            ],
+        }
     }
 }
