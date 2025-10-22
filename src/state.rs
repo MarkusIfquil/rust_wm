@@ -4,6 +4,7 @@ use crate::keys::{HotkeyAction, KeyHandler};
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::ops::Index;
 use std::process::Command;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
@@ -123,7 +124,8 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 border_size: config.border_size as i16,
             },
             active_tag: 1,
-            key_handler: KeyHandler::new(handler.connection, handler.screen.root)?.get_hotkeys(&config)?,
+            key_handler: KeyHandler::new(handler.connection, handler.screen.root)?
+                .get_hotkeys(&config)?,
             connection_handler: handler,
         })
     }
@@ -170,6 +172,18 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         for (_, v) in self.windows.iter() {
             if let Some(f) = v
                 .iter()
+                .find(|w| w.window == window || w.frame_window == window)
+            {
+                return Some(f);
+            }
+        }
+        None
+    }
+
+    pub fn find_window_by_id_mut(&mut self, window: Window) -> Option<&mut WindowState> {
+        for (_, v) in self.windows.iter_mut() {
+            if let Some(f) = v
+                .iter_mut()
                 .find(|w| w.window == window || w.frame_window == window)
             {
                 return Some(f);
@@ -236,7 +250,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         })
     }
 
-    fn handle_keypress(self, event: KeyPressEvent) -> Result<Self, ReplyOrIdError> {
+    fn handle_keypress(mut self, event: KeyPressEvent) -> Result<Self, ReplyOrIdError> {
         println!(
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
@@ -272,6 +286,37 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             HotkeyAction::SwitchTag(n) => {
                 println!("switching to tag {n}");
                 self.change_active_tag(n)
+            }
+            HotkeyAction::MoveWindow(n) => {
+                if self.active_tag == n {
+                    println!("tried switching to already active tag");
+                    return Ok(self);
+                }
+                let act_tag = self.active_tag.clone();
+                let focus_window = self
+                    .connection_handler
+                    .connection
+                    .get_input_focus()?
+                    .reply()?
+                    .focus;
+                let state = if let Some(s) = self.find_window_by_id(focus_window) {
+                    s.clone()
+                } else {
+                    println!("damn");
+                    return Ok(self);
+                };
+                self.connection_handler.unmap(&state)?;
+                if self.get_active_window_group().len() == 1 {
+                    self.connection_handler.set_focus_to_root()?;
+                }
+                let mut windows = self.windows;
+                if let Some(val) = windows.get_mut(&n) {
+                    val.push(state);
+                };
+                if let Some(val) = windows.get_mut(&act_tag) {
+                    val.retain(|w| w.window != focus_window)
+                }
+                Ok(Self { windows, ..self }.tile_windows()?)
             }
         }
     }

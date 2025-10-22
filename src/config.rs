@@ -96,6 +96,60 @@ impl Config {
                     String::from("switchtag"),
                     String::from("9"),
                 ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("1"),
+                    String::from("movewindow"),
+                    String::from("1"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("2"),
+                    String::from("movewindow"),
+                    String::from("2"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("3"),
+                    String::from("movewindow"),
+                    String::from("3"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("4"),
+                    String::from("movewindow"),
+                    String::from("4"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("5"),
+                    String::from("movewindow"),
+                    String::from("5"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("6"),
+                    String::from("movewindow"),
+                    String::from("6"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("7"),
+                    String::from("movewindow"),
+                    String::from("7"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("8"),
+                    String::from("movewindow"),
+                    String::from("8"),
+                ],
+                vec![
+                    String::from("MOD|SHIFT"),
+                    String::from("9"),
+                    String::from("movewindow"),
+                    String::from("9"),
+                ],
             ],
         }
     }

@@ -13,6 +13,7 @@ pub enum HotkeyAction {
     Spawn(String),
     ExitFocusedWindow,
     SwitchTag(u16),
+    MoveWindow(u16),
 }
 #[derive(Debug)]
 pub struct Hotkey {
@@ -94,6 +95,7 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
                 "spawn" => HotkeyAction::Spawn(h[3].clone()),
                 "exit" => HotkeyAction::ExitFocusedWindow,
                 "switchtag" => HotkeyAction::SwitchTag(h[3].clone().parse().unwrap()),
+                "movewindow" => HotkeyAction::MoveWindow(h[3].clone().parse().unwrap()),
                 _ => unimplemented!(),
             };
 

@@ -19,4 +19,13 @@ hotkeys = [
     ["MOD",          "7",            "switchtag", "7"],
     ["MOD",          "8",            "switchtag", "8"],
     ["MOD",          "9",            "switchtag", "9"],
+    ["MOD|SHIFT",          "1",            "movewindow", "1"],
+    ["MOD|SHIFT",          "2",            "movewindow", "2"],
+    ["MOD|SHIFT",          "3",            "movewindow", "3"],
+    ["MOD|SHIFT",          "4",            "movewindow", "4"],
+    ["MOD|SHIFT",          "5",            "movewindow", "5"],
+    ["MOD|SHIFT",          "6",            "movewindow", "6"],
+    ["MOD|SHIFT",          "7",            "movewindow", "7"],
+    ["MOD|SHIFT",          "8",            "movewindow", "8"],
+    ["MOD|SHIFT",          "9",            "movewindow", "9"],
 ]
