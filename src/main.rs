@@ -24,7 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // wm_state = wm_state.scan_for_new_windows()?;
 
     let bar_window = wm_state.bar.clone();
-    let gc = CreateGCAux::new().graphics_exposures(0).background(handler.graphics.0).foreground(handler.graphics.1);
+    let gc = CreateGCAux::new()
+        .graphics_exposures(0)
+        .background(handler.graphics.0)
+        .foreground(handler.graphics.1);
     thread::spawn(move || {
         let (conn, _) = x11rb::connect(None).unwrap();
         let id = conn.generate_id().unwrap();

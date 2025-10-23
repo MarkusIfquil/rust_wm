@@ -1,7 +1,9 @@
-use std::process::exit;
+use std::error::Error;
+use std::process::{Command, exit};
 
 use crate::config::Config;
 use crate::state::*;
+use toml::to_string;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
@@ -408,22 +410,45 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 }
 
 pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, id: u32) {
+    let time = chrono::Local::now()
+    .format("%Y, %b %d. %a, %H:%M:%S")
+        .to_string();
+    let audio =
+        send_command("pactl get-sink-volume 0 | awk '{print $5}'").unwrap_or(String::from(""));
+    let battery =
+        send_command("cat /sys/class/power_supply/BAT0/capacity").unwrap_or(String::from(""));
+    let light = send_command("light").unwrap_or(String::from(""));
+    let light = (light.trim().parse::<f32>().unwrap().round() as i16).to_string();
+    let final_text = format!("L {}% | A {}% | B {} | T {}", light.trim(), battery.trim(), audio.trim(), time);
+    // println!("{}", final_text);
     connection
         .clear_area(
             false,
             w.window,
-            w.width as i16 - 200,
+            w.width as i16 - final_text.len() as i16 * 6,
             w.y,
             w.width,
             w.height,
         )
         .unwrap();
-    let time = chrono::Local::now()
-        .format("%Y, %b %d. %a, %H:%M:%S")
-        .to_string();
     connection
-        .image_text8(w.window, id, w.width as i16 - 200, 13, time.as_bytes())
-        .unwrap()
-        .check()
-        .expect("AAAA");
+        .image_text8(
+            w.window,
+            id,
+            w.width as i16 - final_text.len() as i16 * 6,
+            13,
+            final_text.as_bytes(),
+        )
+        .unwrap();
+}
+
+fn send_command(arg: &str) -> Result<String, Box<dyn Error>> {
+    Ok(String::from_utf8(
+        Command::new("sh")
+            .arg("-c")
+            .arg(arg)
+            .output()
+            .expect("process failed")
+            .stdout,
+    )?)
 }
