@@ -150,6 +150,36 @@ impl Config {
                     String::from("movewindow"),
                     String::from("9"),
                 ],
+                vec![
+                    String::from(""),
+                    String::from("XF86_AudioRaiseVolume"),
+                    String::from("spawn"),
+                    String::from("/usr/bin/pactl set-sink-volume 0 +5%"),
+                ],
+                vec![
+                    String::from(""),
+                    String::from("XF86_AudioLowerVolume"),
+                    String::from("spawn"),
+                    String::from("/usr/bin/pactl set-sink-volume 0 -5%"),
+                ],
+                vec![
+                    String::from(""),
+                    String::from("XF86_AudioMute"),
+                    String::from("spawn"),
+                    String::from("/usr/bin/pactl set-sink-mute 0 toggle"),
+                ],
+                vec![
+                    String::from(""),
+                    String::from("XF86_MonBrightnessUp"),
+                    String::from("spawn"),
+                    String::from("sudo light -A 5"),
+                ],
+                vec![
+                    String::from(""),
+                    String::from("XF86_MonBrightnessDown"),
+                    String::from("spawn"),
+                    String::from("sudo light -U 5"),
+                ],
             ],
         }
     }

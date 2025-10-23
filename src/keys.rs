@@ -89,6 +89,11 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
                 .fold(KeyButMask::default(), |acc, m| acc | m);
             let sym = match h[1].as_str() {
                 "Return" => Keysym::Return,
+                "XF86_MonBrightnessUp" => Keysym::XF86_MonBrightnessUp,
+                "XF86_MonBrightnessDown" => Keysym::XF86_MonBrightnessDown,
+                "XF86_AudioRaiseVolume" => Keysym::XF86_AudioRaiseVolume,
+                "XF86_AudioLowerVolume" => Keysym::XF86_AudioLowerVolume,
+                "XF86_AudioMute" => Keysym::XF86_AudioMute,
                 c => Keysym::from_char(c.chars().next().unwrap()),
             };
             let action = match h[2].as_str() {
