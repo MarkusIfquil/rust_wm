@@ -5,9 +5,12 @@ border_size = 1
 main_color = "#11111b"
 secondary_color = "#74c7ec"
 
+fonts = ["JetBrainsMono Nerd Font Mono:style:medium:size=12", "6x13", "fixed"]
+
 hotkeys = [
     ["CONTROL|MOD",  "Return",       "spawn",     "alacritty"],
     ["MOD",          "q",            "exit",      ""],
+    ["CONTROL|MOD",  "q",            "spawn",     "killall rust_wm"],
     ["MOD",          "c",            "spawn",     "rofi -show drun"],
 
     ["MOD",          "1",            "switchtag", "1"],

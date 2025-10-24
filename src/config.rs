@@ -8,6 +8,7 @@ pub struct Config {
     pub border_size: u16,
     pub main_color: String,
     pub secondary_color: String,
+    pub fonts: Vec<String>,
     pub hotkeys: Vec<Vec<String>>,
 }
 
@@ -23,6 +24,11 @@ impl Config {
             border_size: 1,
             main_color: String::from("#11111b"),
             secondary_color: String::from("#74c7ec"),
+            fonts: vec![
+                String::from("JetBrainsMono Nerd Font Mono:style:medium:size=12"),
+                String::from("6x13"),
+                String::from("fixed"),
+            ],
             hotkeys: vec![
                 vec![
                     String::from("CONTROL|MOD"),
@@ -35,6 +41,12 @@ impl Config {
                     String::from("q"),
                     String::from("exit"),
                     String::from(""),
+                ],
+                vec![
+                    String::from("CONTROL|MOD"),
+                    String::from("q"),
+                    String::from("spawn"),
+                    String::from("killall rust_wm"),
                 ],
                 vec![
                     String::from("MOD"),

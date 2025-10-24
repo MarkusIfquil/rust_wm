@@ -17,7 +17,7 @@ pub enum HotkeyAction {
 }
 #[derive(Debug)]
 pub struct Hotkey {
-    pub sym: Keysym,
+    pub _sym: Keysym,
     pub code: KeyCode,
     pub mask: KeyButMask,
     modifier: ModMask,
@@ -32,7 +32,7 @@ impl Hotkey {
         action: HotkeyAction,
     ) -> Self {
         Hotkey {
-            sym,
+            _sym: sym,
             code: handler
                 .sym_to_code(&sym)
                 .expect("expected sym to have code"),
@@ -77,7 +77,7 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
 
     pub fn get_hotkeys(self, config: &Config) -> Result<Self, ReplyOrIdError> {
         let keys = config.hotkeys.iter().map(|h| {
-            println!("got vec {h:?}");
+            // println!("got vec {h:?}");
             let modifiers = h[0]
                 .split("|")
                 .map(|m| match m {
@@ -104,7 +104,7 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
                 _ => unimplemented!(),
             };
 
-            println!("{:?} {:?} {:?}",modifiers,sym,action);
+            // println!("{:?} {:?} {:?}",modifiers,sym,action);
 
             Hotkey::new(&self, sym, modifiers, action)
         }).collect::<Vec<_>>();

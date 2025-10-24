@@ -2,8 +2,7 @@ use crate::actions::*;
 use crate::config::Config;
 use crate::keys::{HotkeyAction, KeyHandler};
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
@@ -89,7 +88,6 @@ pub struct ManagerState<'a, C: Connection> {
     pub mode: ModeStack,
     pub key_handler: KeyHandler<'a, C>,
     pub bar: WindowState,
-    pub sequences_to_ignore: BinaryHeap<Reverse<u16>>,
     pending_exposed_events: HashSet<Window>,
     connection_handler: &'a ConnectionHandler<'a, C>,
 }
@@ -116,7 +114,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 tag: 0,
             },
             pending_exposed_events: HashSet::default(),
-            sequences_to_ignore: Default::default(),
             mode: ModeStack {
                 ratio_between_master_stack: config.ratio,
                 spacing: config.spacing as i16,
@@ -134,14 +131,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             pending_exposed_events: HashSet::new(),
             ..self
         })
-    }
-
-    pub fn scan_for_new_windows(self) -> Result<Self, ReplyOrIdError> {
-        Ok(self
-            .connection_handler
-            .get_unmanaged_windows()?
-            .iter()
-            .fold(self, |s, window| s.manage_new_window(*window).unwrap()))
     }
 
     pub fn change_active_tag(self, tag: u16) -> Result<Self, ReplyOrIdError> {
@@ -179,18 +168,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         None
     }
 
-    pub fn find_window_by_id_mut(&mut self, window: Window) -> Option<&mut WindowState> {
-        for (_, v) in self.windows.iter_mut() {
-            if let Some(f) = v
-                .iter_mut()
-                .find(|w| w.window == window || w.frame_window == window)
-            {
-                return Some(f);
-            }
-        }
-        None
-    }
-
     pub fn is_valid_window(&self, window: Window) -> bool {
         self.find_window_by_id(window).is_some()
     }
@@ -216,7 +193,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             _ => self,
         };
 
-        Ok(state.clear_ignored_sequences())
+        Ok(state)
     }
 
     fn handle_unmap_notify(self, event: UnmapNotifyEvent) -> Result<Self, ReplyOrIdError> {
@@ -467,12 +444,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.replace_vec_in_map(active_group).unwrap()
     }
 
-    fn clear_ignored_sequences(self) -> Self {
-        Self {
-            sequences_to_ignore: BinaryHeap::new(),
-            ..self
-        }
-    }
 
     fn redraw_tag(self) -> Result<Self, ReplyOrIdError> {
         self.get_active_window_group()

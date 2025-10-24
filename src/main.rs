@@ -21,8 +21,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     handler.create_frame_of_window(&wm_state.bar)?;
     handler.draw_bar(&wm_state, None)?;
 
-    // wm_state = wm_state.scan_for_new_windows()?;
-
     let bar_window = wm_state.bar.clone();
     let gc = CreateGCAux::new()
         .graphics_exposures(0)
@@ -46,7 +44,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut event_as_option = Some(event);
 
         while let Some(event) = event_as_option {
-            // println!("got event {:?}", event);
             handler.handle_event(&wm_state, event.clone())?;
             wm_state = wm_state.handle_event(event.clone())?;
             event_as_option = connection.poll_for_event()?;

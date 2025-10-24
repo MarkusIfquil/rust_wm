@@ -1,9 +1,11 @@
 use std::error::Error;
-use std::process::{Command, exit};
+use std::process::{Command, exit, id};
 
 use crate::config::Config;
 use crate::state::*;
-use toml::to_string;
+use x11::xft::*;
+use x11::xlib::XOpenDisplay;
+use x11::xlib_xcb::xcb_connection_t;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
@@ -57,9 +59,26 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(secondary_color)
             .font(id_font);
 
-        connection.open_font(id_font, b"6x13")?;
-        // println!("got fonts");
-        // connection.list_fonts(100, b"*")?.reply()?.names.iter().for_each(|n|println!("{:?}",String::from_utf8(n.name.clone()).unwrap()));
+        config
+            .fonts
+            .iter()
+            .try_for_each(|f| {
+                println!("setting font to {f}");
+                match connection.open_font(id_font, f.as_bytes()).unwrap().check() {
+                    Ok(_) => Err(0),
+                    Err(_) => Ok(()),
+                }
+            })
+            .unwrap_or(());
+
+        println!("got fonts");
+        connection
+            .list_fonts(100, b"*")?
+            .reply()?
+            .names
+            .iter()
+            .for_each(|n| println!("{:?}", String::from_utf8(n.name.clone()).unwrap()));
+
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
         connection.close_font(id_font)?;
 
@@ -110,7 +129,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn create_frame_of_window(&self, window: &WindowState) -> Res {
-        println!("CREATING FRAME");
         window.print();
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
@@ -230,28 +248,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             },
         )?;
         Ok(())
-    }
-
-    pub fn get_unmanaged_windows(&self) -> Result<Vec<u32>, ReplyOrIdError> {
-        println!("scanning windows");
-        Ok(self
-            .connection
-            .query_tree(self.screen.root)?
-            .reply()?
-            .children
-            .iter()
-            .filter(|window| {
-                let window_attributes = self
-                    .connection
-                    .get_window_attributes(**window)
-                    .unwrap()
-                    .reply()
-                    .unwrap();
-                window_attributes.override_redirect
-                    && window_attributes.map_state != MapState::UNMAPPED
-            })
-            .cloned()
-            .collect())
     }
 
     pub fn set_focus_to_root(&self) -> Result<(), ReplyOrIdError> {
@@ -411,7 +407,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
 pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, id: u32) {
     let time = chrono::Local::now()
-    .format("%Y, %b %d. %a, %H:%M:%S")
+        .format("%Y, %b %d. %a, %H:%M:%S")
         .to_string();
     let audio =
         send_command("pactl get-sink-volume 0 | awk '{print $5}'").unwrap_or(String::from(""));
@@ -419,8 +415,14 @@ pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, i
         send_command("cat /sys/class/power_supply/BAT0/capacity").unwrap_or(String::from(""));
     let light = send_command("light").unwrap_or(String::from(""));
     let light = (light.trim().parse::<f32>().unwrap().round() as i16).to_string();
-    let final_text = format!("L {}% | A {}% | B {} | T {}", light.trim(), battery.trim(), audio.trim(), time);
-    // println!("{}", final_text);
+    let final_text = format!(
+        "L {}% | A {} | B {}% | T {}",
+        light.trim(),
+        audio.trim(),
+        battery.trim(),
+        time
+    );
+    println!("{}", final_text);
     connection
         .clear_area(
             false,
@@ -430,6 +432,9 @@ pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, i
             w.width,
             w.height,
         )
+        .unwrap()
+        .check()
+        .inspect_err(|e| println!("got error {e:?}"))
         .unwrap();
     connection
         .image_text8(
@@ -439,6 +444,9 @@ pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, i
             13,
             final_text.as_bytes(),
         )
+        .unwrap()
+        .check()
+        .inspect_err(|e| println!("AAAA"))
         .unwrap();
 }
 
