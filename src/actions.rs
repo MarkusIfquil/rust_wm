@@ -393,6 +393,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             &[self.create_tag_rectangle(h, wm_state.active_tag)],
         )?;
 
+        let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
         //draw regular text
         (1..=9).try_for_each(|x| {
             if x == wm_state.active_tag {
@@ -400,7 +401,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                     wm_state.bar.window,
                     self.id_inverted_graphics_context,
                     (h * (x - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
-                    (h as i16 / 2) + self.font_ascent / 5 * 2,
+                    text_y,
                     x.to_string().as_bytes(),
                 )?;
             } else {
@@ -408,19 +409,19 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                     wm_state.bar.window,
                     self.id_graphics_context,
                     (h * (x - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
-                    (h as i16 / 2) + self.font_ascent / 5 * 2,
+                    text_y,
                     x.to_string().as_bytes(),
                 )?;
             }
             Ok::<(), ReplyOrIdError>(())
         })?;
 
-        //draw active tag text
+        //draw window name text
         self.connection.image_text8(
             wm_state.bar.window,
             self.id_graphics_context,
-            wm_state.bar.height as i16 * self.font_width,
-            self.font_ascent,
+            h as i16 * 10,
+            text_y,
             bar_text.as_bytes(),
         )?;
 
