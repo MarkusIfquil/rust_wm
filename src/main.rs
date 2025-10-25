@@ -1,13 +1,12 @@
 mod actions;
-mod config;
-mod keys;
 mod state;
+mod keys;
+mod config;
 
 use std::thread;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt, CreateGCAux};
 
 use crate::actions::ConnectionHandler;
 use crate::state::*;
@@ -22,17 +21,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     handler.draw_bar(&wm_state, None)?;
 
     let bar_window = wm_state.bar.clone();
-    let gc = CreateGCAux::new()
-        .graphics_exposures(0)
-        .background(handler.graphics.0)
-        .foreground(handler.graphics.1);
+    
     thread::spawn(move || {
-        let (conn, _) = x11rb::connect(None).unwrap();
-        let id = conn.generate_id().unwrap();
+        let (conn, s) = x11rb::connect(None).unwrap();
+        let other_handler = ConnectionHandler::new(&conn, s).unwrap();
 
-        conn.create_gc(id, bar_window.window, &gc).unwrap();
+
         loop {
-            actions::draw_time_on_bar(&conn, &bar_window, id);
+            other_handler.draw_time_on_bar(&bar_window, other_handler.id_graphics_context);
             thread::sleep(Duration::from_secs(1));
         }
     });

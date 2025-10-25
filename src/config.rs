@@ -25,7 +25,8 @@ impl Config {
             main_color: String::from("#11111b"),
             secondary_color: String::from("#74c7ec"),
             fonts: vec![
-                String::from("JetBrainsMono Nerd Font Mono:style:medium:size=12"),
+                String::from("-misc-jetbrainsmononl nfp-medium-r-normal--24-0-0-0-p-0-koi8-e"),
+                String::from("-misc-jetbrainsmononl nfp medium-medium-r-normal--0-0-0-0-p-0-iso8859-16"),
                 String::from("6x13"),
                 String::from("fixed"),
             ],

@@ -1,11 +1,8 @@
 use std::error::Error;
-use std::process::{Command, exit, id};
+use std::process::{Command, exit};
 
 use crate::config::Config;
 use crate::state::*;
-use x11::xft::*;
-use x11::xlib::XOpenDisplay;
-use x11::xlib_xcb::xcb_connection_t;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
@@ -14,6 +11,7 @@ use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::ErrorKind;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
+use x11rb::x11_utils::TryParse;
 
 type Res = Result<(), ReplyOrIdError>;
 
@@ -29,7 +27,10 @@ pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
     pub id_graphics_context: Gcontext,
+    id_inverted_graphics_context: Gcontext,
     pub graphics: (u32, u32, u32),
+    pub font_ascent: i16,
+    font_width: i16,
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -40,6 +41,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         };
         let screen = &connection.setup().roots[screen_num];
         let id_graphics_context = connection.generate_id()?;
+        let id_inverted_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
 
         let (r, g, b) = hex_color_to_rgb(config.main_color);
@@ -59,34 +61,59 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(secondary_color)
             .font(id_font);
 
+        let inverted_graphics_context = CreateGCAux::new()
+            .graphics_exposures(0)
+            .background(secondary_color)
+            .foreground(main_color)
+            .font(id_font);
+
+        // println!("got fonts");
+        // connection
+        // .list_fonts(10000, b"*")?
+        // .reply()?
+        // .names
+        // .iter()
+        // .for_each(|n| println!("{:?}", String::from_utf8(n.name.clone()).unwrap()));
+
         config
             .fonts
             .iter()
-            .try_for_each(|f| {
-                println!("setting font to {f}");
-                match connection.open_font(id_font, f.as_bytes()).unwrap().check() {
-                    Ok(_) => Err(0),
+            .try_for_each(
+                |f| match connection.open_font(id_font, f.as_bytes()).unwrap().check() {
+                    Ok(_) => {
+                        println!("setting font to {f}");
+                        Err(0)
+                    }
                     Err(_) => Ok(()),
-                }
-            })
+                },
+            )
             .unwrap_or(());
 
-        println!("got fonts");
-        connection
-            .list_fonts(100, b"*")?
-            .reply()?
-            .names
-            .iter()
-            .for_each(|n| println!("{:?}", String::from_utf8(n.name.clone()).unwrap()));
-
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
+        connection.create_gc(
+            id_inverted_graphics_context,
+            screen.root,
+            &inverted_graphics_context,
+        )?;
+        let chars = Char2b {
+            byte1: ('a' as u16 >> 8) as u8,
+            byte2: ('a' as u16 & 0xFF) as u8,
+        };
+        let f = connection.query_text_extents(id_font, &[chars])?.reply()?;
+        println!(
+            "got parameters a{} d{} l{} w{}",
+            f.font_ascent, f.font_descent, f.length, f.overall_width
+        );
         connection.close_font(id_font)?;
 
         Ok(ConnectionHandler {
             connection,
             screen,
             id_graphics_context,
+            id_inverted_graphics_context,
             graphics: (main_color, secondary_color, id_font),
+            font_ascent: f.font_ascent,
+            font_width: f.overall_width as i16,
         })
     }
 
@@ -289,7 +316,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             0,
             0,
             self.screen.width_in_pixels,
-            20,
+            self.font_ascent as u16 * 3 / 2,
             0,
             WindowClass::INPUT_OUTPUT,
             0,
@@ -323,131 +350,122 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         .unwrap())
     }
 
+    fn clear_window(&self, w: &WindowState) -> Res {
+        Ok(self
+            .connection
+            .clear_area(false, w.window, w.x, w.y, w.width, w.height)?
+            .check()?)
+    }
+
+    fn create_tag_rectangle(&self, h: u16, x: u16) -> Rectangle {
+        Rectangle {
+            x: h as i16 * (x as i16 - 1),
+            y: 0,
+            width: h,
+            height: h,
+        }
+    }
+
     pub fn draw_bar(&self, wm_state: &ManagerState<C>, active_window: Option<Window>) -> Res {
-        let bar_text = if let Some(window) = active_window {
-            self.get_window_name(window)?
-        } else {
-            "".to_owned()
+        let bar_text = match active_window {
+            Some(w) => self.get_window_name(w)?,
+            None => "".to_owned(),
         };
-        self.connection.clear_area(
-            false,
-            wm_state.bar.window,
-            wm_state.bar.x,
-            wm_state.bar.y,
-            wm_state.bar.width,
-            wm_state.bar.height,
-        )?;
 
-        let inverted_gc = CreateGCAux::new()
-            .background(self.graphics.1)
-            .foreground(self.graphics.0);
-        let inverted_gc_id = self.connection.generate_id()?;
-        self.connection
-            .create_gc(inverted_gc_id, wm_state.bar.window, &inverted_gc)?;
+        self.clear_window(&wm_state.bar)?;
 
-        let rect_x = (wm_state.bar.height * 3 / 2) as i16;
+        let h = wm_state.bar.height;
+
+        //draw regular tag rect
         self.connection.poly_fill_rectangle(
             wm_state.bar.window,
-            inverted_gc_id,
+            self.id_inverted_graphics_context,
             &(1..=9)
                 .filter(|x| *x != wm_state.active_tag)
-                .map(|x| Rectangle {
-                    x: rect_x * (x - 1) as i16,
-                    y: 0,
-                    width: wm_state.bar.height,
-                    height: wm_state.bar.height,
-                })
-                // .inspect(|x| println!("{} {} {} {}", x.x, x.y, x.width, x.height))
+                .map(|x| self.create_tag_rectangle(h, x))
                 .collect::<Vec<_>>(),
         )?;
 
+        //draw active tag rect
         self.connection.poly_fill_rectangle(
             wm_state.bar.window,
             self.id_graphics_context,
-            &[Rectangle {
-                x: rect_x * (wm_state.active_tag - 1) as i16,
-                y: 0,
-                width: wm_state.bar.height,
-                height: wm_state.bar.height,
-            }],
+            &[self.create_tag_rectangle(h, wm_state.active_tag)],
         )?;
 
+        //draw regular text
         (1..=9).try_for_each(|x| {
             if x == wm_state.active_tag {
                 self.connection.image_text8(
                     wm_state.bar.window,
-                    inverted_gc_id,
-                    rect_x * (x as i16 - 1) + (wm_state.bar.height / 2 - 3) as i16,
-                    13,
+                    self.id_inverted_graphics_context,
+                    (h * (x - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
+                    (h as i16 / 2) + self.font_ascent / 5 * 2,
                     x.to_string().as_bytes(),
                 )?;
             } else {
                 self.connection.image_text8(
                     wm_state.bar.window,
                     self.id_graphics_context,
-                    rect_x * (x as i16 - 1) + (wm_state.bar.height / 2 - 3) as i16,
-                    13,
+                    (h * (x - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
+                    (h as i16 / 2) + self.font_ascent / 5 * 2,
                     x.to_string().as_bytes(),
                 )?;
             }
             Ok::<(), ReplyOrIdError>(())
         })?;
 
+        //draw active tag text
         self.connection.image_text8(
             wm_state.bar.window,
             self.id_graphics_context,
-            wm_state.bar.height as i16 * 14,
-            13,
+            wm_state.bar.height as i16 * self.font_width,
+            self.font_ascent,
             bar_text.as_bytes(),
         )?;
-        draw_time_on_bar(self.connection, &wm_state.bar, self.id_graphics_context);
+
+        self.draw_time_on_bar(&wm_state.bar, self.id_graphics_context)?;
         Ok(())
     }
-}
 
-pub fn draw_time_on_bar<'a, C: Connection>(connection: &'a C, w: &WindowState, id: u32) {
-    let time = chrono::Local::now()
-        .format("%Y, %b %d. %a, %H:%M:%S")
-        .to_string();
-    let audio =
-        send_command("pactl get-sink-volume 0 | awk '{print $5}'").unwrap_or(String::from(""));
-    let battery =
-        send_command("cat /sys/class/power_supply/BAT0/capacity").unwrap_or(String::from(""));
-    let light = send_command("light").unwrap_or(String::from(""));
-    let light = (light.trim().parse::<f32>().unwrap().round() as i16).to_string();
-    let final_text = format!(
-        "L {}% | A {} | B {}% | T {}",
-        light.trim(),
-        audio.trim(),
-        battery.trim(),
-        time
-    );
-    println!("{}", final_text);
-    connection
-        .clear_area(
-            false,
-            w.window,
-            w.width as i16 - final_text.len() as i16 * 6,
-            w.y,
-            w.width,
-            w.height,
-        )
-        .unwrap()
-        .check()
-        .inspect_err(|e| println!("got error {e:?}"))
-        .unwrap();
-    connection
-        .image_text8(
-            w.window,
-            id,
-            w.width as i16 - final_text.len() as i16 * 6,
-            13,
-            final_text.as_bytes(),
-        )
-        .unwrap()
-        .check()
-        .inspect_err(|e| println!("AAAA"))
-        .unwrap();
+    pub fn draw_time_on_bar(&self, w: &WindowState, id: u32) -> Res {
+        let time = chrono::Local::now()
+            .format("%Y, %b %d. %a, %H:%M:%S")
+            .to_string();
+        let audio =
+            send_command("pactl get-sink-volume 0 | awk '{print $5}'").unwrap_or(String::from(""));
+        let battery =
+            send_command("cat /sys/class/power_supply/BAT0/capacity").unwrap_or(String::from(""));
+        let light = send_command("light").unwrap_or(String::from(""));
+        let light = (light.trim().parse::<f32>().unwrap().round() as i16).to_string();
+        let final_text = format!(
+            "L {}% | A {} | B {}% | T {}",
+            light.trim(),
+            audio.trim(),
+            battery.trim(),
+            time
+        );
+        self.connection
+            .clear_area(
+                false,
+                w.window,
+                w.width as i16 - final_text.len() as i16 * self.font_width,
+                w.y,
+                w.width,
+                w.height,
+            )?
+            .check()?;
+        self.connection
+            .image_text8(
+                w.window,
+                id,
+                w.width as i16 - final_text.len() as i16 * self.font_width,
+                (w.height as i16 / 2) + self.font_ascent / 3,
+                final_text.as_bytes(),
+            )?
+            .check()?;
+        Ok(())
+    }
 }
 
 fn send_command(arg: &str) -> Result<String, Box<dyn Error>> {

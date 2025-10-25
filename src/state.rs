@@ -109,7 +109,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 x: 0,
                 y: 0,
                 width: handler.screen.width_in_pixels,
-                height: config.bar_height,
+                height: handler.font_ascent as u16 * 3 / 2,
                 group: WindowGroup::None,
                 tag: 0,
             },
