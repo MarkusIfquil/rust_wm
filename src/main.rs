@@ -1,12 +1,13 @@
 mod actions;
-mod state;
-mod keys;
 mod config;
+mod keys;
+mod state;
 
 use std::thread;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
+use x11rb::errors::ReplyOrIdError;
 
 use crate::actions::ConnectionHandler;
 use crate::state::*;
@@ -21,14 +22,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     handler.draw_bar(&wm_state, None)?;
 
     let bar_window = wm_state.bar.clone();
-    
-    thread::spawn(move || {
-        let (conn, s) = x11rb::connect(None).unwrap();
-        let other_handler = ConnectionHandler::new(&conn, s).unwrap();
 
+    thread::spawn(move || -> Result<(), ReplyOrIdError> {
+        let (conn, s) = match x11rb::connect(None) {
+            Ok((c, s)) => (c, s),
+            Err(_) => return Err(ReplyOrIdError::IdsExhausted),
+        };
+
+        let other_handler = match ConnectionHandler::new(&conn, s) {
+            Ok(h) => h,
+            Err(e) => return Err(e),
+        };
 
         loop {
-            other_handler.draw_time_on_bar(&bar_window, other_handler.id_graphics_context);
+            other_handler.draw_time_on_bar(&bar_window, other_handler.id_graphics_context)?;
             thread::sleep(Duration::from_secs(1));
         }
     });

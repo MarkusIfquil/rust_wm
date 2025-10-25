@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::num::ParseIntError;
 use std::process::{Command, exit};
 
 use crate::config::Config;
@@ -15,12 +16,12 @@ use x11rb::x11_utils::TryParse;
 
 type Res = Result<(), ReplyOrIdError>;
 
-fn hex_color_to_rgb(hex: String) -> (u16, u16, u16) {
-    (
-        u16::from_str_radix(&hex[1..3], 16).unwrap() * 257,
-        u16::from_str_radix(&hex[3..5], 16).unwrap() * 257,
-        u16::from_str_radix(&hex[5..7], 16).unwrap() * 257,
-    )
+fn hex_color_to_rgb(hex: String) -> Result<(u16, u16, u16), ParseIntError> {
+    Ok((
+        u16::from_str_radix(&hex[1..3], 16)? * 257,
+        u16::from_str_radix(&hex[3..5], 16)? * 257,
+        u16::from_str_radix(&hex[5..7], 16)? * 257,
+    ))
 }
 
 pub struct ConnectionHandler<'a, C: Connection> {
@@ -44,12 +45,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let id_inverted_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
 
-        let (r, g, b) = hex_color_to_rgb(config.main_color);
+        let (r, g, b) = hex_color_to_rgb(config.main_color).unwrap_or_default();
         let main_color = connection
             .alloc_color(screen.default_colormap, r, g, b)?
             .reply()?
             .pixel;
-        let (r, g, b) = hex_color_to_rgb(config.secondary_color);
+        let (r, g, b) = hex_color_to_rgb(config.secondary_color).unwrap_or_default();
         let secondary_color = connection
             .alloc_color(screen.default_colormap, r, g, b)?
             .reply()?
@@ -78,15 +79,19 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         config
             .fonts
             .iter()
-            .try_for_each(
-                |f| match connection.open_font(id_font, f.as_bytes()).unwrap().check() {
-                    Ok(_) => {
-                        println!("setting font to {f}");
-                        Err(0)
+            .try_for_each(|f| {
+                if let Ok(c) = connection.open_font(id_font, f.as_bytes()) {
+                    match c.check() {
+                        Ok(_) => {
+                            println!("setting font to {f}");
+                            Err(())
+                        }
+                        Err(_) => Ok(()),
                     }
-                    Err(_) => Ok(()),
-                },
-            )
+                } else {
+                    Ok(())
+                }
+            })
             .unwrap_or(());
 
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
@@ -130,25 +135,15 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn handle_event(&self, wm_state: &ManagerState<C>, event: Event) -> Res {
-        if let Some(w) = match event {
-            Event::MapRequest(e) => Some(e.window),
-            Event::UnmapNotify(e) => Some(e.window),
-            Event::ConfigureRequest(e) => Some(e.window),
-            Event::EnterNotify(e) => Some(e.child),
-            _ => None,
-        } {
-            if !wm_state.is_valid_window(w) {
-                return Ok(());
-            }
-        }
-
         match event {
-            Event::MapRequest(event) => {
-                self.create_frame_of_window(wm_state.find_window_by_id(event.window).unwrap())
-            }
-            Event::UnmapNotify(event) => {
-                self.unmap_window(wm_state, wm_state.find_window_by_id(event.window).unwrap())
-            }
+            Event::MapRequest(event) => match wm_state.find_window_by_id(event.window) {
+                Some(w) => self.create_frame_of_window(w),
+                None => Ok(()),
+            },
+            Event::UnmapNotify(event) => match wm_state.find_window_by_id(event.window) {
+                Some(w) => self.unmap_window(wm_state, w),
+                None => Ok(()),
+            },
             Event::ConfigureRequest(event) => self.config_event_window(event),
             Event::EnterNotify(event) => self.set_focus_window(&wm_state, event.child),
             _ => Ok(()),
@@ -211,10 +206,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn set_focus_window(&self, wm_state: &ManagerState<C>, window: Window) -> Res {
-        if !wm_state
-            .get_active_window_group()
-            .contains(wm_state.find_window_by_id(window).unwrap())
-        {
+        let w = match wm_state.find_window_by_id(window) {
+            Some(w) => w,
+            None => return Ok(()),
+        };
+
+        if !wm_state.get_active_window_group().contains(w) {
             println!("tried setting focus of unmapped window");
             return Ok(());
         }
@@ -239,7 +236,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             })?;
 
         self.connection.change_window_attributes(
-            wm_state.find_window_by_id(window).unwrap().frame_window,
+            w.frame_window,
             &ChangeWindowAttributesAux::new().border_pixel(self.graphics.1),
         )?;
 
@@ -334,7 +331,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     fn get_window_name(&self, window: Window) -> Result<String, ReplyOrIdError> {
-        Ok(String::from_utf8(
+        match String::from_utf8(
             self.connection
                 .get_property(
                     false,
@@ -346,8 +343,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 )?
                 .reply()?
                 .value,
-        )
-        .unwrap())
+        ) {
+            Ok(s) => Ok(s),
+            Err(_) => Ok("".to_owned()),
+        }
     }
 
     fn clear_window(&self, w: &WindowState) -> Res {
@@ -438,7 +437,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let battery =
             send_command("cat /sys/class/power_supply/BAT0/capacity").unwrap_or(String::from(""));
         let light = send_command("light").unwrap_or(String::from(""));
-        let light = (light.trim().parse::<f32>().unwrap().round() as i16).to_string();
+        let light = (light.trim().parse::<f32>().unwrap_or(0.0).round() as i16).to_string();
         let final_text = format!(
             "L {}% | A {} | B {}% | T {}",
             light.trim(),

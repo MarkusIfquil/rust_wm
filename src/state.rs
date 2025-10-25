@@ -56,14 +56,9 @@ impl WindowState {
         window: Window,
         frame_window: Window,
         handler: &ConnectionHandler<C>,
-    ) -> WindowState {
-        let geo = handler
-            .connection
-            .get_geometry(window)
-            .unwrap()
-            .reply()
-            .unwrap();
-        WindowState {
+    ) -> Result<WindowState, ReplyOrIdError> {
+        let geo = handler.connection.get_geometry(window)?.reply()?;
+        Ok(WindowState {
             window,
             frame_window,
             x: geo.x,
@@ -72,7 +67,7 @@ impl WindowState {
             height: geo.height,
             group: WindowGroup::None,
             tag: 1,
-        }
+        })
     }
     pub fn print(&self) {
         println!(
@@ -152,7 +147,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.windows
             .iter()
             .find(|x| *x.0 == self.active_tag)
-            .unwrap()
+            .unwrap_or((&0, &self.windows[&0]))
             .1
     }
 
@@ -205,7 +200,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .map(|x| *x)
             .collect();
         self.replace_vec_in_map(active_window_group)?
-            .set_last_master_others_stack()
+            .set_last_master_others_stack()?
             .tile_windows()
     }
 
@@ -270,7 +265,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         }
     }
 
-    fn move_window(self, n: u16) -> Result<Self,ReplyOrIdError> {
+    fn move_window(self, n: u16) -> Result<Self, ReplyOrIdError> {
         if self.active_tag == n {
             println!("tried switching to already active tag");
             return Ok(self);
@@ -312,9 +307,9 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         })
     }
 
-    fn add_window(self, window: WindowState) -> Self {
+    fn add_window(self, window: WindowState) -> Result<Self, ReplyOrIdError> {
         let active_group = self.get_active_window_group().clone().new_with(window);
-        self.replace_vec_in_map(active_group).unwrap()
+        self.replace_vec_in_map(active_group)
     }
 
     fn manage_new_window(self, window: Window) -> Result<Self, ReplyOrIdError> {
@@ -324,14 +319,14 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             window,
             self.connection_handler.connection.generate_id()?,
             self.connection_handler,
-        );
+        )?;
 
         //side effect
         self.connection_handler.create_frame_of_window(&window)?;
 
         let new_self = self
-            .add_window(window)
-            .set_last_master_others_stack()
+            .add_window(window)?
+            .set_last_master_others_stack()?
             .tile_windows()?;
         new_self
             .connection_handler
@@ -352,77 +347,80 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .get_active_window_group()
             .iter()
             .enumerate()
-            .map(|(i, w)| match w.group {
-                WindowGroup::Master => {
-                    let new_w = WindowState {
-                        window: w.window,
-                        frame_window: w.frame_window,
-                        x: 0 + self.mode.spacing,
-                        y: 0 + self.mode.spacing + self.bar.height as i16,
-                        width: if stack_count == 0 {
-                            self.connection_handler.screen.width_in_pixels
+            .map(|(i, w)| -> Result<WindowState, ReplyOrIdError> {
+                match w.group {
+                    WindowGroup::Master => {
+                        let new_w = WindowState {
+                            window: w.window,
+                            frame_window: w.frame_window,
+                            x: 0 + self.mode.spacing,
+                            y: 0 + self.mode.spacing + self.bar.height as i16,
+                            width: if stack_count == 0 {
+                                self.connection_handler.screen.width_in_pixels
+                                    - (self.mode.spacing * 2) as u16
+                            } else {
+                                ((self.connection_handler.screen.width_in_pixels as f32
+                                    * (1.0 - ratio))
+                                    - ((self.mode.spacing * 2) as f32))
+                                    as u16
+                            },
+                            height: self.connection_handler.screen.height_in_pixels
                                 - (self.mode.spacing * 2) as u16
-                        } else {
-                            ((self.connection_handler.screen.width_in_pixels as f32
-                                * (1.0 - ratio))
-                                - ((self.mode.spacing * 2) as f32))
-                                as u16
-                        },
-                        height: self.connection_handler.screen.height_in_pixels
-                            - (self.mode.spacing * 2) as u16
-                            - self.bar.height,
-                        group: WindowGroup::Master,
-                        tag: self.active_tag,
-                    };
+                                - self.bar.height,
+                            group: WindowGroup::Master,
+                            tag: self.active_tag,
+                        };
 
-                    //side effect
-                    self.connection_handler.config_window(&new_w).unwrap();
-                    new_w
-                }
-                WindowGroup::Stack => {
-                    let new_w = WindowState {
-                        window: w.window,
-                        frame_window: w.frame_window,
-                        x: (self.connection_handler.screen.width_in_pixels as f32 * (1.0 - ratio))
-                            as i16,
-                        y: if i == 0 {
-                            (i * (self.connection_handler.screen.height_in_pixels as usize
-                                / stack_count)
-                                + self.mode.spacing as usize) as i16
-                                + self.bar.height as i16
-                        } else {
-                            (i * (self.connection_handler.screen.height_in_pixels as usize
-                                / stack_count)) as i16
-                        },
-                        width: (self.connection_handler.screen.width_in_pixels as f32 * ratio)
-                            as u16
-                            - (self.mode.spacing) as u16,
-                        height: if i == 0 {
-                            (self.connection_handler.screen.height_in_pixels as usize / stack_count)
+                        //side effect
+                        self.connection_handler.config_window(&new_w)?;
+                        Ok(new_w)
+                    }
+                    WindowGroup::Stack => {
+                        let new_w = WindowState {
+                            window: w.window,
+                            frame_window: w.frame_window,
+                            x: (self.connection_handler.screen.width_in_pixels as f32
+                                * (1.0 - ratio)) as i16,
+                            y: if i == 0 {
+                                (i * (self.connection_handler.screen.height_in_pixels as usize
+                                    / stack_count)
+                                    + self.mode.spacing as usize)
+                                    as i16
+                                    + self.bar.height as i16
+                            } else {
+                                (i * (self.connection_handler.screen.height_in_pixels as usize
+                                    / stack_count)) as i16
+                            },
+                            width: (self.connection_handler.screen.width_in_pixels as f32 * ratio)
                                 as u16
-                                - (self.mode.spacing * 2) as u16
-                                - self.bar.height
-                        } else {
-                            (self.connection_handler.screen.height_in_pixels as usize / stack_count)
-                                as u16
-                                - (self.mode.spacing) as u16
-                        },
-                        group: WindowGroup::Stack,
-                        tag: self.active_tag,
-                    };
+                                - (self.mode.spacing) as u16,
+                            height: if i == 0 {
+                                (self.connection_handler.screen.height_in_pixels as usize
+                                    / stack_count) as u16
+                                    - (self.mode.spacing * 2) as u16
+                                    - self.bar.height
+                            } else {
+                                (self.connection_handler.screen.height_in_pixels as usize
+                                    / stack_count) as u16
+                                    - (self.mode.spacing) as u16
+                            },
+                            group: WindowGroup::Stack,
+                            tag: self.active_tag,
+                        };
 
-                    //side effect
-                    self.connection_handler.config_window(&new_w).unwrap();
-                    new_w
+                        //side effect
+                        self.connection_handler.config_window(&new_w)?;
+                        Ok(new_w)
+                    }
+                    _ => Ok(*w),
                 }
-                _ => *w,
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         self.replace_vec_in_map(active_group)
     }
 
-    fn set_last_master_others_stack(self) -> Self {
+    fn set_last_master_others_stack(self) -> Result<Self, ReplyOrIdError> {
         let active_group = self
             .get_active_window_group()
             .iter()
@@ -441,9 +439,8 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 }
             })
             .collect();
-        self.replace_vec_in_map(active_group).unwrap()
+        self.replace_vec_in_map(active_group)
     }
-
 
     fn redraw_tag(self) -> Result<Self, ReplyOrIdError> {
         self.get_active_window_group()

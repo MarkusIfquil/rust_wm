@@ -76,38 +76,42 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
     }
 
     pub fn get_hotkeys(self, config: &Config) -> Result<Self, ReplyOrIdError> {
-        let keys = config.hotkeys.iter().map(|h| {
-            // println!("got vec {h:?}");
-            let modifiers = h[0]
-                .split("|")
-                .map(|m| match m {
-                    "CONTROL" => KeyButMask::CONTROL,
-                    "SHIFT" => KeyButMask::SHIFT,
-                    "MOD" => KeyButMask::MOD4,
-                    _ => KeyButMask::default(),
-                })
-                .fold(KeyButMask::default(), |acc, m| acc | m);
-            let sym = match h[1].as_str() {
-                "Return" => Keysym::Return,
-                "XF86_MonBrightnessUp" => Keysym::XF86_MonBrightnessUp,
-                "XF86_MonBrightnessDown" => Keysym::XF86_MonBrightnessDown,
-                "XF86_AudioRaiseVolume" => Keysym::XF86_AudioRaiseVolume,
-                "XF86_AudioLowerVolume" => Keysym::XF86_AudioLowerVolume,
-                "XF86_AudioMute" => Keysym::XF86_AudioMute,
-                c => Keysym::from_char(c.chars().next().unwrap()),
-            };
-            let action = match h[2].as_str() {
-                "spawn" => HotkeyAction::Spawn(h[3].clone()),
-                "exit" => HotkeyAction::ExitFocusedWindow,
-                "switchtag" => HotkeyAction::SwitchTag(h[3].clone().parse().unwrap()),
-                "movewindow" => HotkeyAction::MoveWindow(h[3].clone().parse().unwrap()),
-                _ => unimplemented!(),
-            };
+        let keys = config
+            .hotkeys
+            .iter()
+            .map(|h| {
+                // println!("got vec {h:?}");
+                let modifiers = h[0]
+                    .split("|")
+                    .map(|m| match m {
+                        "CONTROL" => KeyButMask::CONTROL,
+                        "SHIFT" => KeyButMask::SHIFT,
+                        "MOD" => KeyButMask::MOD4,
+                        _ => KeyButMask::default(),
+                    })
+                    .fold(KeyButMask::default(), |acc, m| acc | m);
+                let sym = match h[1].as_str() {
+                    "Return" => Keysym::Return,
+                    "XF86_MonBrightnessUp" => Keysym::XF86_MonBrightnessUp,
+                    "XF86_MonBrightnessDown" => Keysym::XF86_MonBrightnessDown,
+                    "XF86_AudioRaiseVolume" => Keysym::XF86_AudioRaiseVolume,
+                    "XF86_AudioLowerVolume" => Keysym::XF86_AudioLowerVolume,
+                    "XF86_AudioMute" => Keysym::XF86_AudioMute,
+                    c => Keysym::from_char(c.chars().next().unwrap_or_default()),
+                };
+                let action = match h[2].as_str() {
+                    "spawn" => HotkeyAction::Spawn(h[3].clone()),
+                    "exit" => HotkeyAction::ExitFocusedWindow,
+                    "switchtag" => HotkeyAction::SwitchTag(h[3].clone().parse().unwrap_or(0)),
+                    "movewindow" => HotkeyAction::MoveWindow(h[3].clone().parse().unwrap_or(0)),
+                    _ => unimplemented!(),
+                };
 
-            // println!("{:?} {:?} {:?}",modifiers,sym,action);
+                // println!("{:?} {:?} {:?}",modifiers,sym,action);
 
-            Hotkey::new(&self, sym, modifiers, action)
-        }).collect::<Vec<_>>();
+                Hotkey::new(&self, sym, modifiers, action)
+            })
+            .collect::<Vec<_>>();
 
         keys.iter().try_for_each(|h| self.listen_to_hotkey(&h))?;
 
