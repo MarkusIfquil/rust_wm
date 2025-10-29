@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         loop {
-            other_handler.draw_time_on_bar(&bar_window, other_handler.id_graphics_context)?;
+            other_handler.draw_status_bar(&bar_window, other_handler.id_graphics_context)?;
             thread::sleep(Duration::from_secs(1));
         }
     });

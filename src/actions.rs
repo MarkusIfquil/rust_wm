@@ -1,6 +1,5 @@
-use std::error::Error;
 use std::num::ParseIntError;
-use std::process::{Command, exit};
+use std::process::exit;
 
 use crate::config::Config;
 use crate::state::*;
@@ -336,7 +335,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 .value,
         ) {
             Ok(s) => Ok(s),
-            Err(_) => Ok("".to_owned()),
+            Err(_) => Ok("window".to_owned()),
         }
     }
 
@@ -415,32 +414,17 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             bar_text.as_bytes(),
         )?;
 
-        self.draw_time_on_bar(&wm_state.bar, self.id_graphics_context)?;
+        self.draw_status_bar(&wm_state.bar, self.id_graphics_context)?;
         Ok(())
     }
 
-    pub fn draw_time_on_bar(&self, w: &WindowState, id: u32) -> Res {
-        let time = chrono::Local::now()
-            .format("%Y, %b %d. %a, %H:%M:%S")
-            .to_string();
-        let audio =
-            send_command("pactl get-sink-volume 0 | awk '{print $5}'").unwrap_or(String::from(""));
-        let battery =
-            send_command("cat /sys/class/power_supply/BAT0/capacity").unwrap_or(String::from(""));
-        let light = send_command("light").unwrap_or(String::from(""));
-        let light = (light.trim().parse::<f32>().unwrap_or(0.0).round() as i16).to_string();
-        let final_text = format!(
-            "L {}% | A {} | B {}% | T {}",
-            light.trim(),
-            audio.trim(),
-            battery.trim(),
-            time
-        );
+    pub fn draw_status_bar(&self, w: &WindowState, id: u32) -> Res {
+        let status_text = self.get_window_name(self.screen.root)?;
         self.connection
             .clear_area(
                 false,
                 w.window,
-                w.width as i16 - final_text.len() as i16 * self.font_width,
+                w.width as i16 - status_text.len() as i16 * self.font_width,
                 w.y,
                 w.width,
                 w.height,
@@ -450,22 +434,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .image_text8(
                 w.window,
                 id,
-                w.width as i16 - final_text.len() as i16 * self.font_width,
+                w.width as i16 - status_text.len() as i16 * self.font_width,
                 (w.height as i16 / 2) + self.font_ascent / 3,
-                final_text.as_bytes(),
+                status_text.as_bytes(),
             )?
             .check()?;
         Ok(())
     }
-}
-
-fn send_command(arg: &str) -> Result<String, Box<dyn Error>> {
-    Ok(String::from_utf8(
-        Command::new("sh")
-            .arg("-c")
-            .arg(arg)
-            .output()
-            .expect("process failed")
-            .stdout,
-    )?)
 }
