@@ -41,14 +41,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     loop {
-        wm_state = wm_state.clear_exposed_events()?;
+        wm_state.pending_exposed_events.clear();
         connection.flush()?;
         let event = connection.wait_for_event()?;
         let mut event_as_option = Some(event);
 
         while let Some(event) = event_as_option {
             handler.handle_event(&wm_state, event.clone())?;
-            wm_state = wm_state.handle_event(event.clone())?;
+            wm_state.handle_event(event.clone())?;
             event_as_option = connection.poll_for_event()?;
         }
     }

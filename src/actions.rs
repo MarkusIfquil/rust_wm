@@ -12,7 +12,6 @@ use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::ErrorKind;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
-use x11rb::x11_utils::TryParse;
 
 type Res = Result<(), ReplyOrIdError>;
 
@@ -67,14 +66,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .background(secondary_color)
             .foreground(main_color)
             .font(id_font);
-
-        // println!("got fonts");
-        // connection
-        // .list_fonts(10000, b"*")?
-        // .reply()?
-        // .names
-        // .iter()
-        // .for_each(|n| println!("{:?}", String::from_utf8(n.name.clone()).unwrap()));
 
         config
             .fonts
@@ -226,7 +217,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .try_for_each(|w| {
                 self.connection.configure_window(
                     w.frame_window,
-                    &ConfigureWindowAux::new().border_width(wm_state.mode.border_size as u32),
+                    &ConfigureWindowAux::new().border_width(wm_state.config.border_size as u32),
                 )?;
                 self.connection.change_window_attributes(
                     w.frame_window,
