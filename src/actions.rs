@@ -248,7 +248,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 sibling: None,
                 stack_mode: None,
             },
-        )?;
+        )?.check()?;
         self.connection.configure_window(
             window.window,
             &ConfigureWindowAux {
@@ -260,7 +260,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 sibling: None,
                 stack_mode: None,
             },
-        )?;
+        )?.check()?;
         Ok(())
     }
 
@@ -309,7 +309,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             0,
             &CreateWindowAux::new().background_pixel(self.graphics.0),
         )?;
-        // self.map(window)?;
         Ok(())
     }
 
@@ -346,7 +345,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .check()?)
     }
 
-    fn create_tag_rectangle(&self, h: u16, x: u16) -> Rectangle {
+    fn create_tag_rectangle(&self, h: u16, x: usize) -> Rectangle {
         Rectangle {
             x: h as i16 * (x as i16 - 1),
             y: 0,
@@ -370,7 +369,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             wm_state.bar.window,
             self.id_inverted_graphics_context,
             &(1..=9)
-                .filter(|x| *x != wm_state.active_tag)
+                .filter(|x| *x != wm_state.active_tag+1)
                 .map(|x| self.create_tag_rectangle(h, x))
                 .collect::<Vec<_>>(),
         )?;
@@ -379,17 +378,17 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection.poly_fill_rectangle(
             wm_state.bar.window,
             self.id_graphics_context,
-            &[self.create_tag_rectangle(h, wm_state.active_tag)],
+            &[self.create_tag_rectangle(h, wm_state.active_tag+1)],
         )?;
 
         let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
         //draw regular text
         (1..=9).try_for_each(|x| {
-            if x == wm_state.active_tag {
+            if x == wm_state.active_tag+1 {
                 self.connection.image_text8(
                     wm_state.bar.window,
                     self.id_inverted_graphics_context,
-                    (h * (x - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
+                    (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
                     text_y,
                     x.to_string().as_bytes(),
                 )?;
@@ -397,7 +396,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 self.connection.image_text8(
                     wm_state.bar.window,
                     self.id_graphics_context,
-                    (h * (x - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
+                    (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
                     text_y,
                     x.to_string().as_bytes(),
                 )?;
