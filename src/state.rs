@@ -31,19 +31,17 @@ pub struct WindowState {
 }
 
 impl WindowState {
-    fn new<C: Connection>(
+    fn new(
         window: Window,
         frame_window: Window,
-        handler: &ConnectionHandler<C>,
     ) -> Result<WindowState, ReplyOrIdError> {
-        let geo = handler.connection.get_geometry(window)?.reply()?;
         Ok(WindowState {
             window,
             frame_window,
-            x: geo.x,
-            y: geo.y,
-            width: geo.width,
-            height: geo.height,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
             group: WindowGroup::None,
             tag: 1,
         })
@@ -276,7 +274,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         let window = WindowState::new(
             window,
             self.connection_handler.connection.generate_id()?,
-            self.connection_handler,
         )?;
 
         //side effect
