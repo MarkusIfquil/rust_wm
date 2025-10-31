@@ -142,7 +142,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 Some(w) => self.unmap_window(wm_state, w),
                 None => Ok(()),
             },
-            Event::ConfigureRequest(event) => self.config_event_window(event),
+            Event::ConfigureRequest(event) => self.config_from_event(event),
             Event::EnterNotify(event) => self.set_focus_window(&wm_state, event.child),
             Event::KeyPress(e) => self.handle_keypress(e),
             _ => Ok(()),
@@ -150,7 +150,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn create_frame_of_window(&self, window: &WindowState) -> Res {
-        // window.print();
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
             window.frame_window,
@@ -270,8 +269,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn config_window(&self, window: &WindowState) -> Res {
-
-        println!("CONFIG WINDOW {}", window.window);
+        println!("configuring window {} from state", window.window);
         window.print();
         self.connection
             .configure_window(
@@ -361,13 +359,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 self.connection.kill_client(focus)?.check()?
             }
         };
-        println!("DONE");
         Ok(())
     }
 
-    fn config_event_window(&self, event: ConfigureRequestEvent) -> Res {
-        let aux = ConfigureWindowAux::from_configure_request(&event);
+    fn config_from_event(&self, event: ConfigureRequestEvent) -> Res {
         println!("configuring window: {}", event.window);
+        let aux = ConfigureWindowAux::from_configure_request(&event);
         self.connection.configure_window(event.window, &aux)?;
         Ok(())
     }
