@@ -270,6 +270,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn config_window(&self, window: &WindowState) -> Res {
+
         println!("CONFIG WINDOW {}", window.window);
         window.print();
         self.connection
@@ -352,8 +353,15 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn kill_focus(&self) -> Res {
-        self.connection
-            .kill_client(self.connection.get_input_focus()?.reply()?.focus)?;
+        let focus = self.connection.get_input_focus()?.reply()?.focus;
+        println!("killing focus window {focus}");
+        match focus == 1 {
+            true => println!("tried killing root"),
+            false => {
+                self.connection.kill_client(focus)?.check()?
+            }
+        };
+        println!("DONE");
         Ok(())
     }
 
@@ -429,13 +437,17 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
         //draw regular text
         (1..=9).try_for_each(|x| {
+            let text = match wm_state.tags[x - 1].windows.is_empty() {
+                true => format!("{}", x),
+                false => format!("{}", x),
+            };
             if x == wm_state.active_tag + 1 {
                 self.connection.image_text8(
                     wm_state.bar.window,
                     self.id_inverted_graphics_context,
                     (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
                     text_y,
-                    x.to_string().as_bytes(),
+                    text.as_bytes(),
                 )?;
             } else {
                 self.connection.image_text8(
@@ -443,7 +455,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                     self.id_graphics_context,
                     (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
                     text_y,
-                    x.to_string().as_bytes(),
+                    text.as_bytes(),
                 )?;
             }
             Ok::<(), ReplyOrIdError>(())

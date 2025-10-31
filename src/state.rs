@@ -50,7 +50,7 @@ impl WindowState {
 pub struct Tag {
     tag: usize,
     focus: Option<u32>,
-    windows: Vec<WindowState>,
+    pub windows: Vec<WindowState>,
 }
 impl Tag {
     fn new(tag: usize) -> Self {
@@ -155,6 +155,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
+        println!("handling state keypress {} {:?}",event.detail, event.state);
         let action = match self.connection_handler.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
@@ -163,13 +164,15 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         match action {
             HotkeyAction::SwitchTag(n) => {
                 self.change_active_tag(n as usize - 1)?;
-            }
+                self.refresh()?;
+            },
             HotkeyAction::MoveWindow(n) => {
                 self.move_window(n as usize - 1)?;
-            }
+                self.refresh()?;
+            },
             _ => {}
         };
-        self.refresh()
+        Ok(())
     }
 
     fn handle_enter(&mut self, event: EnterNotifyEvent) {
