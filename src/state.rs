@@ -2,7 +2,6 @@ use crate::actions::*;
 use crate::config::Config;
 use crate::keys::HotkeyAction;
 
-use std::collections::HashSet;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::Event;
@@ -143,16 +142,14 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         println!("state unmap: {}", event.window);
         self.get_mut_active_window_group()
             .retain(|w| w.window != event.window);
-        self.set_last_master_others_stack()?;
-        self.tile_windows()?;
-        Ok(())
+        self.refresh()
     }
 
     fn handle_map_request(&mut self, event: MapRequestEvent) -> Res {
         println!("state map: {}", event.window);
-        self.manage_new_window(event.window)
+        self.manage_new_window(event.window)?;
+        self.refresh()
     }
-
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
         let action = match self.connection_handler.key_handler.get_action(event) {
@@ -169,7 +166,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             }
             _ => {}
         };
-        Ok(())
+        self.refresh()
     }
 
     fn change_active_tag(&mut self, tag: usize) -> Res {
@@ -191,12 +188,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .try_for_each(|w| self.connection_handler.map(w))?;
 
         self.connection_handler.draw_bar(&self, None)?;
-        if let Some(w) = self.get_active_window_group().last() {
-            self.connection_handler.set_focus_window(&self, w.window)?;
-        } else {
-            self.connection_handler.set_focus_to_root()?;
-        }
-        self.tile_windows()
+        Ok(())
     }
 
     fn move_window(&mut self, tag: usize) -> Res {
@@ -227,8 +219,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.tags[self.active_tag]
             .windows
             .retain(|w| w.window != focus_window);
-
-        self.tile_windows()
+        Ok(())
     }
 
     fn add_window(&mut self, window: WindowState) {
@@ -245,10 +236,24 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.connection_handler.create_frame_of_window(&window)?;
 
         self.add_window(window);
+        Ok(())
+    }
+
+    fn refresh(&mut self) -> Res {
         self.set_last_master_others_stack()?;
         self.tile_windows()?;
-        self.connection_handler
-            .set_focus_window(&self, window.window)?;
+        self.refresh_focus()?;
+        Ok(())
+    }
+
+    fn set_last_master_others_stack(&mut self) -> Res {
+        self.get_mut_active_window_group()
+            .iter_mut()
+            .for_each(|w| w.group = WindowGroup::Stack);
+
+        if let Some(w) = self.get_mut_active_window_group().last_mut() {
+            w.group = WindowGroup::Master;
+        };
         Ok(())
     }
 
@@ -306,13 +311,14 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         Ok(())
     }
 
-    fn set_last_master_others_stack(&mut self) -> Res {
-        self.get_mut_active_window_group()
-            .iter_mut()
-            .for_each(|w| w.group = WindowGroup::Stack);
-
-        if let Some(w) = self.get_mut_active_window_group().last_mut() {
-            w.group = WindowGroup::Master;
+    fn refresh_focus(&self) -> Res {
+        match self.get_active_window_group().last() {
+            Some(w) => {
+                self.connection_handler.set_focus_window(self, w.window)?;
+            }
+            None => {
+                self.connection_handler.set_focus_to_root()?;
+            }
         };
         Ok(())
     }
