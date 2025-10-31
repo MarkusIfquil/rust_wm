@@ -41,7 +41,7 @@ impl WindowState {
     }
     pub fn print(&self) {
         println!(
-            "window: id {} x {} y {} w {} h {} g {:?}",
+            "id {} x {} y {} w {} h {} g {:?}",
             self.window, self.x, self.y, self.width, self.height, self.group
         );
     }
@@ -145,6 +145,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         println!("state unmap: {}", event.window);
         self.get_mut_active_window_group()
             .retain(|w| w.window != event.window);
+        self.set_tag_focus_to_master();
         self.refresh()
     }
 
@@ -155,7 +156,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
-        println!("handling state keypress {} {:?}",event.detail, event.state);
+        println!("handling state keypress {} {:?}", event.detail, event.state);
         let action = match self.connection_handler.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
@@ -165,11 +166,11 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             HotkeyAction::SwitchTag(n) => {
                 self.change_active_tag(n as usize - 1)?;
                 self.refresh()?;
-            },
+            }
             HotkeyAction::MoveWindow(n) => {
                 self.move_window(n as usize - 1)?;
                 self.refresh()?;
-            },
+            }
             _ => {}
         };
         Ok(())
@@ -178,7 +179,8 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     fn handle_enter(&mut self, event: EnterNotifyEvent) {
         self.tags[self.active_tag].focus = match self.find_window_by_id(event.child) {
             Some(w) => Some(w.window),
-            None => None,
+            None if self.tags[self.active_tag].windows.is_empty() => None,
+            None => self.tags[self.active_tag].focus,
         };
     }
 
@@ -229,10 +231,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.tags[self.active_tag]
             .windows
             .retain(|w| w.window != focus_window);
-        self.tags[self.active_tag].focus = match self.tags[self.active_tag].windows.last() {
-            Some(w) => Some(w.window),
-            None => None,
-        };
+        self.set_tag_focus_to_master();
         Ok(())
     }
 
@@ -252,6 +251,14 @@ impl<'a, C: Connection> ManagerState<'a, C> {
 
         self.add_window(window);
         Ok(())
+    }
+
+    fn set_tag_focus_to_master(&mut self) {
+        println!("setting tag focus to master");
+        self.tags[self.active_tag].focus = match self.tags[self.active_tag].windows.last() {
+            Some(w) => Some(w.window),
+            None => None,
+        };
     }
 
     fn refresh(&mut self) -> Res {
@@ -339,8 +346,8 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn print_state(&self) {
-        println!("Manager state: active tag {}", self.active_tag);
-        self.tags.iter().for_each(|t| {
+        println!("Manager state: active tag {} focus {:?}", self.active_tag,self.tags[self.active_tag].focus);
+        self.tags.iter().filter(|t|!t.windows.is_empty()).for_each(|t| {
             println!("tag {} windows:", t.tag);
             t.windows.iter().for_each(|w| w.print());
         });

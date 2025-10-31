@@ -164,13 +164,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             &CreateWindowAux::new()
                 .event_mask(
                     EventMask::KEY_PRESS
-                        | EventMask::KEY_RELEASE
-                        | EventMask::EXPOSURE
-                        | EventMask::SUBSTRUCTURE_NOTIFY
-                        | EventMask::BUTTON_PRESS
-                        | EventMask::BUTTON_RELEASE
-                        | EventMask::POINTER_MOTION
-                        | EventMask::ENTER_WINDOW,
+                    | EventMask::KEY_RELEASE
+                    | EventMask::EXPOSURE
+                    | EventMask::SUBSTRUCTURE_NOTIFY
+                    | EventMask::BUTTON_PRESS
+                    | EventMask::BUTTON_RELEASE
+                    | EventMask::POINTER_MOTION
+                    | EventMask::ENTER_WINDOW,
                 )
                 .background_pixel(self.graphics.0)
                 .border_pixel(self.graphics.1),
@@ -197,9 +197,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection
             .reparent_window(window.window, self.screen.root, window.x, window.y)?;
         self.connection.destroy_window(window.frame_window)?;
-        if wm_state.get_active_window_group().len() == 1 {
-            self.set_focus_to_root()?;
-        }
         Ok(())
     }
 
