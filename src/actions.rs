@@ -355,9 +355,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         println!("killing focus window {focus}");
         match focus == 1 {
             true => println!("tried killing root"),
-            false => {
-                self.connection.kill_client(focus)?.check()?
-            }
+            false => self.connection.kill_client(focus)?.check()?,
         };
         Ok(())
     }
@@ -424,6 +422,22 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 .collect::<Vec<_>>(),
         )?;
 
+        self.connection.poly_fill_rectangle(
+            wm_state.bar.window,
+            self.id_graphics_context,
+            &(1..=9)
+                .filter(|x| {
+                    *x != wm_state.active_tag + 1 && !wm_state.tags[x - 1].windows.is_empty()
+                })
+                .map(|x| Rectangle {
+                    x: h as i16 * (x as i16 - 1) + h as i16 / 9,
+                    y: h as i16 / 9,
+                    width: h / 7,
+                    height: h / 7,
+                })
+                .collect::<Vec<Rectangle>>(),
+        )?;
+
         //draw active tag rect
         self.connection.poly_fill_rectangle(
             wm_state.bar.window,
@@ -431,13 +445,23 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             &[self.create_tag_rectangle(h, wm_state.active_tag + 1)],
         )?;
 
+        if !wm_state.tags[wm_state.active_tag].windows.is_empty() {
+            self.connection.poly_fill_rectangle(
+                wm_state.bar.window,
+                self.id_inverted_graphics_context,
+                &[Rectangle {
+                    x: h as i16 * (wm_state.active_tag as i16) + h as i16 / 9,
+                    y: h as i16 / 9,
+                    width: h / 7,
+                    height: h / 7,
+                }],
+            )?;
+        }
+
         let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
         //draw regular text
         (1..=9).try_for_each(|x| {
-            let text = match wm_state.tags[x - 1].windows.is_empty() {
-                true => format!("{}", x),
-                false => format!("{}", x),
-            };
+            let text = x.to_string();
             if x == wm_state.active_tag + 1 {
                 self.connection.image_text8(
                     wm_state.bar.window,
