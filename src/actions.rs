@@ -1,7 +1,10 @@
 use std::num::ParseIntError;
+use std::process::Command;
 use std::process::exit;
 
 use crate::config::Config;
+use crate::keys::HotkeyAction;
+use crate::keys::KeyHandler;
 use crate::state::*;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::CURRENT_TIME;
@@ -14,7 +17,7 @@ use x11rb::protocol::xproto::*;
 
 type Res = Result<(), ReplyOrIdError>;
 
-fn hex_color_to_rgb(hex: String) -> Result<(u16, u16, u16), ParseIntError> {
+fn hex_color_to_rgb(hex: &str) -> Result<(u16, u16, u16), ParseIntError> {
     Ok((
         u16::from_str_radix(&hex[1..3], 16)? * 257,
         u16::from_str_radix(&hex[3..5], 16)? * 257,
@@ -30,6 +33,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
     pub graphics: (u32, u32, u32),
     pub font_ascent: i16,
     font_width: i16,
+    pub key_handler: KeyHandler<'a, C>,
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -43,12 +47,14 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let id_inverted_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
 
-        let (r, g, b) = hex_color_to_rgb(config.main_color).unwrap_or_default();
+        //set main color
+        let (r, g, b) = hex_color_to_rgb(&config.main_color).unwrap_or_default();
         let main_color = connection
             .alloc_color(screen.default_colormap, r, g, b)?
             .reply()?
             .pixel;
-        let (r, g, b) = hex_color_to_rgb(config.secondary_color).unwrap_or_default();
+        //set secondary color
+        let (r, g, b) = hex_color_to_rgb(&config.secondary_color).unwrap_or_default();
         let secondary_color = connection
             .alloc_color(screen.default_colormap, r, g, b)?
             .reply()?
@@ -66,6 +72,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(main_color)
             .font(id_font);
 
+        //try setting font to first available font
         config
             .fonts
             .iter()
@@ -90,6 +97,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             screen.root,
             &inverted_graphics_context,
         )?;
+
+        //get font parameters
         let chars = Char2b {
             byte1: ('a' as u16 >> 8) as u8,
             byte2: ('a' as u16 & 0xFF) as u8,
@@ -109,6 +118,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             graphics: (main_color, secondary_color, id_font),
             font_ascent: f.font_ascent,
             font_width: f.overall_width as i16,
+            key_handler: KeyHandler::new(connection, screen.root)?.get_hotkeys(&config)?,
         })
     }
 
@@ -136,12 +146,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             },
             Event::ConfigureRequest(event) => self.config_event_window(event),
             Event::EnterNotify(event) => self.set_focus_window(&wm_state, event.child),
+            Event::KeyPress(e) => self.handle_keypress(e),
             _ => Ok(()),
         }
     }
 
     pub fn create_frame_of_window(&self, window: &WindowState) -> Res {
-        window.print();
+        // window.print();
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
             window.frame_window,
@@ -206,7 +217,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             return Ok(());
         }
         println!("setting focus to: {:?}", window);
-        // Set the input focus (ignoring ICCCM's WM_PROTOCOLS / WM_TAKE_FOCUS)
         self.connection
             .set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
 
@@ -234,33 +244,75 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
+    pub fn get_hotkey_action(&self, event: KeyPressEvent) -> Option<HotkeyAction> {
+        if let Some(h) = self
+            .key_handler
+            .get_registered_hotkey(event.state, event.detail as u32)
+        {
+            Some(h.action.clone())
+        } else {
+            None
+        }
+    }
+
+    fn handle_keypress(&self, event: KeyPressEvent) -> Res {
+        println!(
+            "handling keypress with code {} and modifier {:?}",
+            event.detail, event.state
+        );
+
+        let action = match self.get_hotkey_action(event) {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+
+        match action {
+            HotkeyAction::Spawn(command) => {
+                let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
+                Command::new(parts[0].clone())
+                    .args(parts[1..].iter())
+                    .spawn()
+                    .expect("cant spawn process");
+            }
+            HotkeyAction::ExitFocusedWindow => {
+                self.kill_focus()?;
+            }
+            _ => {}
+        };
+        Ok(())
+    }
+
     pub fn config_window(&self, window: &WindowState) -> Res {
         println!("CONFIG WINDOW {}", window.window);
         window.print();
-        self.connection.configure_window(
-            window.frame_window,
-            &ConfigureWindowAux {
-                x: Some(window.x as i32),
-                y: Some(window.y as i32),
-                width: Some(window.width as u32),
-                height: Some(window.height as u32),
-                border_width: None,
-                sibling: None,
-                stack_mode: None,
-            },
-        )?.check()?;
-        self.connection.configure_window(
-            window.window,
-            &ConfigureWindowAux {
-                x: Some(0),
-                y: Some(0),
-                width: Some(window.width as u32),
-                height: Some(window.height as u32),
-                border_width: None,
-                sibling: None,
-                stack_mode: None,
-            },
-        )?.check()?;
+        self.connection
+            .configure_window(
+                window.frame_window,
+                &ConfigureWindowAux {
+                    x: Some(window.x as i32),
+                    y: Some(window.y as i32),
+                    width: Some(window.width as u32),
+                    height: Some(window.height as u32),
+                    border_width: None,
+                    sibling: None,
+                    stack_mode: None,
+                },
+            )?
+            .check()?;
+        self.connection
+            .configure_window(
+                window.window,
+                &ConfigureWindowAux {
+                    x: Some(0),
+                    y: Some(0),
+                    width: Some(window.width as u32),
+                    height: Some(window.height as u32),
+                    border_width: None,
+                    sibling: None,
+                    stack_mode: None,
+                },
+            )?
+            .check()?;
         Ok(())
     }
 
@@ -309,6 +361,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             0,
             &CreateWindowAux::new().background_pixel(self.graphics.0),
         )?;
+        Ok(())
+    }
+
+    pub fn kill_focus(&self) -> Res {
+        self.connection
+            .kill_client(self.connection.get_input_focus()?.reply()?.focus)?;
         Ok(())
     }
 
@@ -369,7 +427,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             wm_state.bar.window,
             self.id_inverted_graphics_context,
             &(1..=9)
-                .filter(|x| *x != wm_state.active_tag+1)
+                .filter(|x| *x != wm_state.active_tag + 1)
                 .map(|x| self.create_tag_rectangle(h, x))
                 .collect::<Vec<_>>(),
         )?;
@@ -378,13 +436,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection.poly_fill_rectangle(
             wm_state.bar.window,
             self.id_graphics_context,
-            &[self.create_tag_rectangle(h, wm_state.active_tag+1)],
+            &[self.create_tag_rectangle(h, wm_state.active_tag + 1)],
         )?;
 
         let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
         //draw regular text
         (1..=9).try_for_each(|x| {
-            if x == wm_state.active_tag+1 {
+            if x == wm_state.active_tag + 1 {
                 self.connection.image_text8(
                     wm_state.bar.window,
                     self.id_inverted_graphics_context,

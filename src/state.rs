@@ -1,9 +1,8 @@
 use crate::actions::*;
 use crate::config::Config;
-use crate::keys::{HotkeyAction, KeyHandler};
+use crate::keys::HotkeyAction;
 
 use std::collections::HashSet;
-use std::process::Command;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
 use x11rb::protocol::Event;
@@ -68,7 +67,6 @@ pub struct ManagerState<'a, C: Connection> {
     pub active_tag: usize,
     pub bar: WindowState,
     pub config: Config,
-    pub key_handler: KeyHandler<'a, C>,
     connection_handler: &'a ConnectionHandler<'a, C>,
 }
 
@@ -94,38 +92,9 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             },
             pending_exposed_events: HashSet::default(),
             active_tag: 0,
-            key_handler: KeyHandler::new(handler.connection, handler.screen.root)?
-                .get_hotkeys(&config)?,
             connection_handler: handler,
             config,
         })
-    }
-
-    pub fn change_active_tag(&mut self, tag: usize) -> Res {
-        if self.active_tag == tag {
-            println!("tried switching to already active tag");
-            return Ok(());
-        }
-        println!("changing tag to {tag}");
-        //unmap old tag
-        self.tags[self.active_tag]
-            .windows
-            .iter()
-            .try_for_each(|w| self.connection_handler.unmap(w))?;
-
-        self.active_tag = tag;
-        //map new tag
-        self.get_active_window_group()
-            .iter()
-            .try_for_each(|w| self.connection_handler.map(w))?;
-
-        self.connection_handler.draw_bar(&self, None)?;
-        if let Some(w) = self.get_active_window_group().last() {
-            self.connection_handler.set_focus_window(&self, w.window)?;
-        } else {
-            self.connection_handler.set_focus_to_root()?;
-        }
-        self.tile_windows()
     }
 
     pub fn get_active_window_group(&self) -> &Vec<WindowState> {
@@ -161,14 +130,8 @@ impl<'a, C: Connection> ManagerState<'a, C> {
 
     pub fn handle_event(&mut self, event: Event) -> Res {
         match event {
-            Event::UnmapNotify(e) => {
-                self.handle_unmap_notify(e)?;
-                self.print_state();
-            }
-            Event::MapRequest(e) => {
-                self.handle_map_request(e)?;
-                self.print_state();
-            }
+            Event::UnmapNotify(e) => self.handle_unmap_notify(e)?,
+            Event::MapRequest(e) => self.handle_map_request(e)?,
             Event::Expose(e) => self.handle_expose(e),
             Event::KeyPress(e) => self.handle_keypress(e)?,
             Event::Error(e) => {
@@ -199,46 +162,48 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
-        println!(
-            "handling keypress with code {} and modifier {:?}",
-            event.detail, event.state
-        );
-        let action = if let Some(h) = self
-            .key_handler
-            .get_registered_hotkey(event.state, event.detail as u32)
-        {
-            h.action.clone()
-        } else {
-            return Ok(());
+        let action = match self.connection_handler.get_hotkey_action(event) {
+            Some(a) => a,
+            None => return Ok(()),
         };
 
         match action {
-            HotkeyAction::Spawn(command) => {
-                let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
-                Command::new(parts[0].clone())
-                    .args(parts[1..].iter())
-                    .spawn()
-                    .expect("cant spawn process");
-            }
-            HotkeyAction::ExitFocusedWindow => {
-                self.connection_handler.connection.kill_client(
-                    self.connection_handler
-                        .connection
-                        .get_input_focus()?
-                        .reply()?
-                        .focus,
-                )?;
-            }
             HotkeyAction::SwitchTag(n) => {
-                println!("switching to tag {}",n-1);
                 self.change_active_tag(n as usize - 1)?;
-            }
+            },
             HotkeyAction::MoveWindow(n) => {
-                println!("moving window to {n}");
                 self.move_window(n as usize - 1)?;
-            }
+            },
+            _ => {}
         };
         Ok(())
+    }
+
+    fn change_active_tag(&mut self, tag: usize) -> Res {
+        if self.active_tag == tag {
+            println!("tried switching to already active tag");
+            return Ok(());
+        }
+        println!("changing tag to {tag}");
+        //unmap old tag
+        self.tags[self.active_tag]
+            .windows
+            .iter()
+            .try_for_each(|w| self.connection_handler.unmap(w))?;
+
+        self.active_tag = tag;
+        //map new tag
+        self.get_active_window_group()
+            .iter()
+            .try_for_each(|w| self.connection_handler.map(w))?;
+
+        self.connection_handler.draw_bar(&self, None)?;
+        if let Some(w) = self.get_active_window_group().last() {
+            self.connection_handler.set_focus_window(&self, w.window)?;
+        } else {
+            self.connection_handler.set_focus_to_root()?;
+        }
+        self.tile_windows()
     }
 
     fn move_window(&mut self, tag: usize) -> Res {
@@ -274,7 +239,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn add_window(&mut self, window: WindowState) {
-        println!("adding window to tag {}",self.active_tag);
+        println!("adding window to tag {}", self.active_tag);
         self.tags[self.active_tag].windows.push(window);
     }
 
@@ -295,22 +260,18 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn tile_windows(&mut self) -> Res {
-        println!("tiling tag {}",self.active_tag);
+        println!("tiling tag {}", self.active_tag);
         let conf = self.config.clone();
         let (maxw, maxh) = (
             self.connection_handler.screen.width_in_pixels,
             self.connection_handler.screen.height_in_pixels,
         );
         let stack_count = self.get_active_window_group().len().clamp(1, 100) - 1;
-        println!("{stack_count}");
-        println!("{}",self.get_active_window_group().len());
 
         self.get_mut_active_window_group()
             .iter_mut()
             .enumerate()
             .try_for_each(|(i, w)| -> Res {
-                println!("FUCK");
-                w.print();
                 match w.group {
                     WindowGroup::Master => {
                         w.x = 0 + conf.spacing as i16;
@@ -349,8 +310,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.get_active_window_group()
             .iter()
             .try_for_each(|w| self.connection_handler.config_window(w))?;
-        println!("AAAAAAAAAA");
-        self.print_state();
         Ok(())
     }
 
