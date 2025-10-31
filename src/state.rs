@@ -62,7 +62,6 @@ impl Tag {
 }
 
 pub struct ManagerState<'a, C: Connection> {
-    pub pending_exposed_events: HashSet<Window>,
     pub tags: Vec<Tag>,
     pub active_tag: usize,
     pub bar: WindowState,
@@ -90,7 +89,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 height: handler.font_ascent as u16 * 3 / 2,
                 group: WindowGroup::None,
             },
-            pending_exposed_events: HashSet::default(),
             active_tag: 0,
             connection_handler: handler,
             config,
@@ -132,7 +130,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         match event {
             Event::UnmapNotify(e) => self.handle_unmap_notify(e)?,
             Event::MapRequest(e) => self.handle_map_request(e)?,
-            Event::Expose(e) => self.handle_expose(e),
             Event::KeyPress(e) => self.handle_keypress(e)?,
             Event::Error(e) => {
                 println!("GOT ERROR: {e:?}");
@@ -156,10 +153,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.manage_new_window(event.window)
     }
 
-    fn handle_expose(&mut self, event: ExposeEvent) {
-        println!("state expose: {}", event.window);
-        self.pending_exposed_events.insert(event.window);
-    }
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
         let action = match self.connection_handler.key_handler.get_action(event) {

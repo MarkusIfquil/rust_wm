@@ -1,3 +1,5 @@
+// Xephyr -br -ac -noreset -screen 800x600 :1
+
 mod actions;
 mod config;
 mod keys;
@@ -41,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     loop {
-        wm_state.pending_exposed_events.clear();
         connection.flush()?;
         let event = connection.wait_for_event()?;
         let mut event_as_option = Some(event);
