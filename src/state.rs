@@ -49,12 +49,14 @@ impl WindowState {
 
 pub struct Tag {
     tag: usize,
+    focus: Option<u32>,
     windows: Vec<WindowState>,
 }
 impl Tag {
     fn new(tag: usize) -> Self {
         Tag {
             tag,
+            focus: None,
             windows: Vec::new(),
         }
     }
@@ -130,6 +132,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             Event::UnmapNotify(e) => self.handle_unmap_notify(e)?,
             Event::MapRequest(e) => self.handle_map_request(e)?,
             Event::KeyPress(e) => self.handle_keypress(e)?,
+            Event::EnterNotify(e) => self.handle_enter(e),
             Event::Error(e) => {
                 println!("GOT ERROR: {e:?}");
             }
@@ -167,6 +170,13 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             _ => {}
         };
         self.refresh()
+    }
+
+    fn handle_enter(&mut self, event: EnterNotifyEvent) {
+        self.tags[self.active_tag].focus = match self.find_window_by_id(event.child) {
+            Some(w) => Some(w.window),
+            None => None,
+        };
     }
 
     fn change_active_tag(&mut self, tag: usize) -> Res {
@@ -212,19 +222,21 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         };
         self.connection_handler.unmap(&state)?;
 
-        if self.get_active_window_group().len() == 1 {
-            self.connection_handler.set_focus_to_root()?;
-        }
         self.tags[tag].windows.push(state);
         self.tags[self.active_tag]
             .windows
             .retain(|w| w.window != focus_window);
+        self.tags[self.active_tag].focus = match self.tags[self.active_tag].windows.last() {
+            Some(w) => Some(w.window),
+            None => None,
+        };
         Ok(())
     }
 
     fn add_window(&mut self, window: WindowState) {
         println!("adding window to tag {}", self.active_tag);
         self.tags[self.active_tag].windows.push(window);
+        self.tags[self.active_tag].focus = Some(window.window);
     }
 
     fn manage_new_window(&mut self, window: Window) -> Res {
@@ -312,9 +324,9 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn refresh_focus(&self) -> Res {
-        match self.get_active_window_group().last() {
+        match self.tags[self.active_tag].focus {
             Some(w) => {
-                self.connection_handler.set_focus_window(self, w.window)?;
+                self.connection_handler.set_focus_window(self, w)?;
             }
             None => {
                 self.connection_handler.set_focus_to_root()?;
