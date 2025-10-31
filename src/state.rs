@@ -162,7 +162,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
-        let action = match self.connection_handler.get_hotkey_action(event) {
+        let action = match self.connection_handler.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
         };
@@ -170,10 +170,10 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         match action {
             HotkeyAction::SwitchTag(n) => {
                 self.change_active_tag(n as usize - 1)?;
-            },
+            }
             HotkeyAction::MoveWindow(n) => {
                 self.move_window(n as usize - 1)?;
-            },
+            }
             _ => {}
         };
         Ok(())

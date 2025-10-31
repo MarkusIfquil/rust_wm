@@ -2,18 +2,16 @@ use std::num::ParseIntError;
 use std::process::Command;
 use std::process::exit;
 
+use x11rb::COPY_DEPTH_FROM_PARENT;
+use x11rb::CURRENT_TIME;
+use x11rb::connection::Connection;
+use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::protocol::{ErrorKind, Event, xproto::*};
+
 use crate::config::Config;
 use crate::keys::HotkeyAction;
 use crate::keys::KeyHandler;
 use crate::state::*;
-use x11rb::COPY_DEPTH_FROM_PARENT;
-use x11rb::CURRENT_TIME;
-use x11rb::connection::Connection;
-use x11rb::errors::ReplyError;
-use x11rb::errors::ReplyOrIdError;
-use x11rb::protocol::ErrorKind;
-use x11rb::protocol::Event;
-use x11rb::protocol::xproto::*;
 
 type Res = Result<(), ReplyOrIdError>;
 
@@ -28,12 +26,12 @@ fn hex_color_to_rgb(hex: &str) -> Result<(u16, u16, u16), ParseIntError> {
 pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
+    pub key_handler: KeyHandler<'a, C>,
     pub id_graphics_context: Gcontext,
     id_inverted_graphics_context: Gcontext,
     pub graphics: (u32, u32, u32),
     pub font_ascent: i16,
     font_width: i16,
-    pub key_handler: KeyHandler<'a, C>,
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -244,24 +242,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn get_hotkey_action(&self, event: KeyPressEvent) -> Option<HotkeyAction> {
-        if let Some(h) = self
-            .key_handler
-            .get_registered_hotkey(event.state, event.detail as u32)
-        {
-            Some(h.action.clone())
-        } else {
-            None
-        }
-    }
-
     fn handle_keypress(&self, event: KeyPressEvent) -> Res {
         println!(
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
         );
 
-        let action = match self.get_hotkey_action(event) {
+        let action = match self.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
         };

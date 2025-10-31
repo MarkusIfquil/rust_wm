@@ -2,7 +2,8 @@ use x11rb::{
     connection::Connection,
     errors::ReplyOrIdError,
     protocol::xproto::{
-        ConnectionExt, GetKeyboardMappingReply, GrabMode, KeyButMask, ModMask, Window,
+        ConnectionExt, GetKeyboardMappingReply, GrabMode, KeyButMask, KeyPressEvent, ModMask,
+        Window,
     },
 };
 use xkeysym::{KeyCode, Keysym};
@@ -119,6 +120,14 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
             hotkeys: keys,
             ..self
         })
+    }
+
+    pub fn get_action(&self, event: KeyPressEvent) -> Option<HotkeyAction> {
+        if let Some(h) = self.get_registered_hotkey(event.state, event.detail as u32) {
+            Some(h.action.clone())
+        } else {
+            None
+        }
     }
 
     pub fn code_to_sym(&self, code: u8) -> Option<Keysym> {
