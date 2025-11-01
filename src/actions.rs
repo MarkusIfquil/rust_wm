@@ -5,8 +5,10 @@ use std::process::exit;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
+use x11rb::cursor;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::{ErrorKind, Event, xproto::*};
+use x11rb::resource_manager;
 
 use crate::config::Config;
 use crate::keys::HotkeyAction;
@@ -70,6 +72,19 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(main_color)
             .font(id_font);
 
+        //set default cursor
+        let cursor = cursor::Handle::new(
+            connection,
+            screen_num,
+            &resource_manager::new_from_default(connection)?,
+        )?
+        .reply()?
+        .load_cursor(connection, "left_ptr")?;
+        connection.change_window_attributes(
+            screen.root,
+            &ChangeWindowAttributesAux::new().cursor(cursor),
+        )?;
+
         //try setting font to first available font
         config
             .fonts
@@ -97,14 +112,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         )?;
 
         //get font parameters
-        let chars = Char2b {
-            byte1: ('a' as u16 >> 8) as u8,
-            byte2: ('a' as u16 & 0xFF) as u8,
-        };
-        let f = connection.query_text_extents(id_font, &[chars])?.reply()?;
+        let f = connection.query_font(id_font)?.reply()?.max_bounds;
         println!(
-            "got parameters a{} d{} l{} w{}",
-            f.font_ascent, f.font_descent, f.length, f.overall_width
+            "got parameters a{} d{} w{}",
+            f.ascent, f.descent, f.character_width
         );
         connection.close_font(id_font)?;
 
@@ -114,8 +125,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             id_graphics_context,
             id_inverted_graphics_context,
             graphics: (main_color, secondary_color, id_font),
-            font_ascent: f.font_ascent,
-            font_width: f.overall_width as i16,
+            font_ascent: f.ascent,
+            font_width: f.character_width as i16,
             key_handler: KeyHandler::new(connection, screen.root)?.get_hotkeys(&config)?,
         })
     }
@@ -134,19 +145,45 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
     pub fn handle_event(&self, wm_state: &ManagerState<C>, event: Event) -> Res {
         match event {
-            Event::MapRequest(event) => match wm_state.find_window_by_id(event.window) {
-                Some(w) => self.create_frame_of_window(w),
-                None => Ok(()),
-            },
-            Event::UnmapNotify(event) => match wm_state.find_window_by_id(event.window) {
-                Some(w) => self.unmap_window(wm_state, w),
-                None => Ok(()),
-            },
-            Event::ConfigureRequest(event) => self.config_from_event(event),
-            Event::EnterNotify(event) => self.set_focus_window(&wm_state, event.child),
+            Event::MapRequest(e) => self.handle_map(wm_state, e),
+            Event::UnmapNotify(e) => self.handle_unmap(wm_state, e),
+            Event::ConfigureRequest(e) => self.handle_config(wm_state, e),
+            Event::EnterNotify(e) => self.handle_enter(wm_state, e),
             Event::KeyPress(e) => self.handle_keypress(e),
             _ => Ok(()),
         }
+    }
+
+    fn handle_map(&self, wm_state: &ManagerState<C>, event: MapRequestEvent) -> Res {
+        match wm_state.find_window_by_id(event.window) {
+            Some(w) => self.create_frame_of_window(w),
+            None => Ok(()),
+        }
+    }
+
+    fn handle_unmap(&self, wm_state: &ManagerState<C>, event: UnmapNotifyEvent) -> Res {
+        match wm_state.find_window_by_id(event.window) {
+            Some(w) => self.unmap_window(wm_state, w),
+            None => Ok(()),
+        }
+    }
+
+    fn handle_config(&self, wm_state: &ManagerState<C>, event: ConfigureRequestEvent) -> Res {
+        match wm_state.find_window_by_id(event.window) {
+            Some(_) => self.config_from_event(event),
+            None => Ok(()),
+        }
+    }
+
+    fn handle_enter(&self, wm_state: &ManagerState<C>, event: EnterNotifyEvent) -> Res {
+        println!("got enter wid {} fid {}", event.child, event.event);
+        if let Some(w) = wm_state.find_window_by_id(event.child) {
+            return self.set_focus_window(wm_state, w);
+        };
+        if let Some(w) = wm_state.find_window_by_id(event.event) {
+            return self.set_focus_window(wm_state, w);
+        };
+        Ok(())
     }
 
     pub fn create_frame_of_window(&self, window: &WindowState) -> Res {
@@ -164,13 +201,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             &CreateWindowAux::new()
                 .event_mask(
                     EventMask::KEY_PRESS
-                    | EventMask::KEY_RELEASE
-                    | EventMask::EXPOSURE
-                    | EventMask::SUBSTRUCTURE_NOTIFY
-                    | EventMask::BUTTON_PRESS
-                    | EventMask::BUTTON_RELEASE
-                    | EventMask::POINTER_MOTION
-                    | EventMask::ENTER_WINDOW,
+                        | EventMask::KEY_RELEASE
+                        | EventMask::EXPOSURE
+                        | EventMask::SUBSTRUCTURE_NOTIFY
+                        | EventMask::BUTTON_PRESS
+                        | EventMask::BUTTON_RELEASE
+                        // | EventMask::POINTER_MOTION
+                        | EventMask::ENTER_WINDOW,
                 )
                 .background_pixel(self.graphics.0)
                 .border_pixel(self.graphics.1),
@@ -200,19 +237,14 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn set_focus_window(&self, wm_state: &ManagerState<C>, window: Window) -> Res {
-        let w = match wm_state.find_window_by_id(window) {
-            Some(w) => w,
-            None => return Ok(()),
-        };
-
-        if !wm_state.get_active_window_group().contains(w) {
+    pub fn set_focus_window(&self, wm_state: &ManagerState<C>, window: &WindowState) -> Res {
+        if !wm_state.get_active_window_group().contains(window) {
             println!("tried setting focus of unmapped window");
             return Ok(());
         }
-        println!("setting focus to: {:?}", window);
+        println!("setting focus to: {:?}", window.window);
         self.connection
-            .set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
+            .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
 
         wm_state
             .get_active_window_group()
@@ -230,11 +262,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             })?;
 
         self.connection.change_window_attributes(
-            w.frame_window,
+            window.frame_window,
             &ChangeWindowAttributesAux::new().border_pixel(self.graphics.1),
         )?;
 
-        self.draw_bar(wm_state, Some(window))?;
+        self.draw_bar(wm_state, Some(window.window))?;
         Ok(())
     }
 
@@ -309,8 +341,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let change = ChangeWindowAttributesAux::default().event_mask(
             EventMask::SUBSTRUCTURE_REDIRECT
                 | EventMask::SUBSTRUCTURE_NOTIFY
-                | EventMask::KEY_PRESS
-                | EventMask::KEY_RELEASE,
+                | EventMask::KEY_PRESS,
         );
         let result = self
             .connection

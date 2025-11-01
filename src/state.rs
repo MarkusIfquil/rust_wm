@@ -41,8 +41,8 @@ impl WindowState {
     }
     pub fn print(&self) {
         println!(
-            "id {} x {} y {} w {} h {} g {:?}",
-            self.window, self.x, self.y, self.width, self.height, self.group
+            "id {} fid {} x {} y {} w {} h {} g {:?}",
+            self.window, self.frame_window, self.x, self.y, self.width, self.height, self.group
         );
     }
 }
@@ -265,6 +265,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.set_last_master_others_stack()?;
         self.tile_windows()?;
         self.refresh_focus()?;
+        self.print_state();
         Ok(())
     }
 
@@ -336,7 +337,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     fn refresh_focus(&self) -> Res {
         match self.tags[self.active_tag].focus {
             Some(w) => {
-                self.connection_handler.set_focus_window(self, w)?;
+                self.connection_handler.set_focus_window(self, self.find_window_by_id(w).unwrap())?;
             }
             None => {
                 self.connection_handler.set_focus_to_root()?;
