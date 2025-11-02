@@ -13,14 +13,35 @@ use x11rb::errors::ReplyOrIdError;
 
 use crate::actions::ConnectionHandler;
 use crate::state::*;
+
+trait ErrorPrinter {
+    fn print(self);
+}
+
+impl ErrorPrinter for Result<(), ReplyOrIdError> {
+    fn print(self) {
+        let error = match self {
+            Ok(_) => return,
+            Err(e) => e,
+        };
+
+        println!("got error: {:?}", error);
+        match error {
+            ReplyOrIdError::X11Error(e) => println!("x11 error {:?}", e),
+            ReplyOrIdError::IdsExhausted => println!("ids exhausted"),
+            ReplyOrIdError::ConnectionError(e) => println!("connection error {:?}", e),
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, screen_num) = x11rb::connect(None)?;
     let handler = ConnectionHandler::new(&connection, screen_num)?;
-    handler.become_window_manager()?;
+    handler.become_window_manager().print();
     let mut wm_state = ManagerState::new(&handler)?;
 
-    handler.create_bar_window(wm_state.bar.window)?;
-    handler.create_frame_of_window(&wm_state.bar)?;
+    handler.create_bar_window(wm_state.bar.window).print();
+    handler.create_frame_of_window(&wm_state.bar).print();
     handler.draw_bar(&wm_state, None)?;
 
     let bar_window = wm_state.bar.clone();
@@ -48,8 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut event_as_option = Some(event);
 
         while let Some(event) = event_as_option {
-            handler.handle_event(&wm_state, event.clone())?;
-            wm_state.handle_event(event.clone())?;
+            handler.handle_event(&wm_state, event.clone()).print();
+            wm_state.handle_event(event.clone()).print();
             event_as_option = connection.poll_for_event()?;
         }
     }

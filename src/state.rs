@@ -49,7 +49,7 @@ impl WindowState {
 
 pub struct Tag {
     tag: usize,
-    focus: Option<u32>,
+    pub focus: Option<u32>,
     pub windows: Vec<WindowState>,
 }
 impl Tag {

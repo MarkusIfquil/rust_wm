@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::num::ParseIntError;
 use std::process::Command;
 use std::process::exit;
@@ -34,6 +35,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
     pub graphics: (u32, u32, u32),
     pub font_ascent: i16,
     font_width: i16,
+    atoms: HashMap<String, u32>,
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -46,6 +48,15 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let id_graphics_context = connection.generate_id()?;
         let id_inverted_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
+
+        let wm_protocols = connection
+            .intern_atom(false, b"WM_PROTOCOLS")?
+            .reply()?
+            .atom;
+        let wm_delete_window = connection
+            .intern_atom(false, b"WM_DELETE_WINDOW")?
+            .reply()?
+            .atom;
 
         //set main color
         let (r, g, b) = hex_color_to_rgb(&config.main_color).unwrap_or_default();
@@ -128,6 +139,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             font_ascent: f.ascent,
             font_width: f.character_width as i16,
             key_handler: KeyHandler::new(connection, screen.root)?.get_hotkeys(&config)?,
+            atoms: HashMap::from([
+                ("WM_PROTOCOLS".to_string(), wm_protocols),
+                ("WM_DELETE_WINDOW".to_string(), wm_delete_window),
+            ]),
         })
     }
 
@@ -149,7 +164,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             Event::UnmapNotify(e) => self.handle_unmap(wm_state, e),
             Event::ConfigureRequest(e) => self.handle_config(wm_state, e),
             Event::EnterNotify(e) => self.handle_enter(wm_state, e),
-            Event::KeyPress(e) => self.handle_keypress(e),
+            Event::KeyPress(e) => self.handle_keypress(wm_state, e),
             _ => Ok(()),
         }
     }
@@ -182,6 +197,33 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         };
         if let Some(w) = wm_state.find_window_by_id(event.event) {
             return self.set_focus_window(wm_state, w);
+        };
+        Ok(())
+    }
+
+    fn handle_keypress(&self, wm_state: &ManagerState<C>, event: KeyPressEvent) -> Res {
+        println!(
+            "handling keypress with code {} and modifier {:?}",
+            event.detail, event.state
+        );
+
+        let action = match self.key_handler.get_action(event) {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+
+        match action {
+            HotkeyAction::Spawn(command) => {
+                let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
+                Command::new(parts[0].clone())
+                    .args(parts[1..].iter())
+                    .spawn()
+                    .expect("cant spawn process");
+            }
+            HotkeyAction::ExitFocusedWindow => {
+                self.kill_focus(wm_state)?;
+            }
+            _ => {}
         };
         Ok(())
     }
@@ -270,33 +312,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    fn handle_keypress(&self, event: KeyPressEvent) -> Res {
-        println!(
-            "handling keypress with code {} and modifier {:?}",
-            event.detail, event.state
-        );
-
-        let action = match self.key_handler.get_action(event) {
-            Some(a) => a,
-            None => return Ok(()),
-        };
-
-        match action {
-            HotkeyAction::Spawn(command) => {
-                let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
-                Command::new(parts[0].clone())
-                    .args(parts[1..].iter())
-                    .spawn()
-                    .expect("cant spawn process");
-            }
-            HotkeyAction::ExitFocusedWindow => {
-                self.kill_focus()?;
-            }
-            _ => {}
-        };
-        Ok(())
-    }
-
     pub fn config_window(&self, window: &WindowState) -> Res {
         println!("configuring window {} from state", window.window);
         window.print();
@@ -378,13 +393,24 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn kill_focus(&self) -> Res {
-        let focus = self.connection.get_input_focus()?.reply()?.focus;
-        println!("killing focus window {focus}");
-        match focus == 1 {
-            true => println!("tried killing root"),
-            false => self.connection.kill_client(focus)?.check()?,
+    pub fn kill_focus(&self, wm_state: &ManagerState<C>) -> Res {
+        let focus = if let Some(f) = wm_state.tags[wm_state.active_tag].focus {
+            f
+        } else {
+            return Ok(());
         };
+        println!("killing focus window {focus}");
+        self.connection.send_event(
+            false,
+            focus,
+            EventMask::NO_EVENT,
+            ClientMessageEvent::new(
+                32,
+                focus,
+                self.atoms["WM_PROTOCOLS"],
+                [self.atoms["WM_DELETE_WINDOW"], 0, 0, 0, 0],
+            ),
+        )?;
         Ok(())
     }
 
