@@ -159,13 +159,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn refresh(&self, wm_state: &ManagerState<C>) -> Res {
-        self.draw_bar(wm_state, wm_state.tags[wm_state.active_tag].focus)?;        
+        self.draw_bar(wm_state, wm_state.tags[wm_state.active_tag].focus)?;
         Ok(())
     }
 
     pub fn handle_event(&self, wm_state: &ManagerState<C>, event: Event) -> Res {
         match event {
-            // Event::MapRequest(e) => self.handle_map(wm_state, e),
             Event::UnmapNotify(e) => self.handle_unmap(wm_state, e),
             Event::ConfigureRequest(e) => self.handle_config(wm_state, e),
             Event::EnterNotify(e) => self.handle_enter(wm_state, e),
@@ -174,23 +173,19 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    // fn handle_map(&self, wm_state: &ManagerState<C>, event: MapRequestEvent) -> Res {
-        // match wm_state.find_window_by_id(event.window) {
-            // Some(w) => self.create_frame_of_window(w),
-            // None => Ok(()),
-        // }
-    // }
-
     fn handle_unmap(&self, wm_state: &ManagerState<C>, event: UnmapNotifyEvent) -> Res {
-        match wm_state.find_window_by_id(event.window) {
-            Some(w) => self.unmap_window(wm_state, w),
+        match wm_state.get_window_state(event.window) {
+            Some(w) => self.destroy_window(w),
             None => Ok(()),
         }
     }
 
     fn handle_config(&self, wm_state: &ManagerState<C>, event: ConfigureRequestEvent) -> Res {
-        println!("EVENT CONFIG w {} x {} y {} w {} h {}",event.window, event.x, event.y, event.width, event.height);
-        match wm_state.find_window_by_id(event.window) {
+        println!(
+            "EVENT CONFIG w {} x {} y {} w {} h {}",
+            event.window, event.x, event.y, event.width, event.height
+        );
+        match wm_state.get_window_state(event.window) {
             Some(_) => self.config_from_event(event),
             None => Ok(()),
         }
@@ -198,10 +193,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
     fn handle_enter(&self, wm_state: &ManagerState<C>, event: EnterNotifyEvent) -> Res {
         println!("got enter wid {} fid {}", event.child, event.event);
-        if let Some(w) = wm_state.find_window_by_id(event.child) {
+        if let Some(w) = wm_state.get_window_state(event.child) {
             return self.set_focus_window(wm_state, w);
         };
-        if let Some(w) = wm_state.find_window_by_id(event.event) {
+        if let Some(w) = wm_state.get_window_state(event.event) {
             return self.set_focus_window(wm_state, w);
         };
         Ok(())
@@ -270,11 +265,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn unmap_window(&self, wm_state: &ManagerState<C>, window: &WindowState) -> Res {
-        if !wm_state.get_active_window_group().contains(window) {
-            println!("tried destroying non active tagged window");
-            return Ok(());
-        }
+    pub fn destroy_window(&self, window: &WindowState) -> Res {
         println!("destroying window: {}", window.window);
         self.connection
             .change_save_set(SetMode::DELETE, window.window)?;
@@ -285,10 +276,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn set_focus_window(&self, wm_state: &ManagerState<C>, window: &WindowState) -> Res {
-        if !wm_state.get_active_window_group().contains(window) {
-            println!("tried setting focus of unmapped window");
-            return Ok(());
-        }
         println!("setting focus to: {:?}", window.window);
         self.connection
             .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
@@ -312,18 +299,15 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             window.frame_window,
             &ChangeWindowAttributesAux::new().border_pixel(self.graphics.1),
         )?;
-
-        self.draw_bar(wm_state, Some(window.window))?;
         Ok(())
     }
 
-    pub fn get_focus(&self) -> Result<u32,ReplyOrIdError> {
+    pub fn get_focus(&self) -> Result<u32, ReplyOrIdError> {
         Ok(self.connection.get_input_focus()?.reply()?.focus)
     }
 
     pub fn config_window(&self, window: &WindowState) -> Res {
         println!("configuring window {} from state", window.window);
-        window.print();
         self.connection
             .configure_window(
                 window.frame_window,
@@ -358,29 +342,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     pub fn set_focus_to_root(&self) -> Result<(), ReplyOrIdError> {
         self.connection
             .set_input_focus(InputFocus::NONE, 1 as u32, CURRENT_TIME)?;
-        Ok(())
-    }
-
-    pub fn become_window_manager(&self) -> Res {
-        let change = ChangeWindowAttributesAux::default().event_mask(
-            EventMask::SUBSTRUCTURE_REDIRECT
-                | EventMask::SUBSTRUCTURE_NOTIFY
-                | EventMask::KEY_PRESS,
-        );
-        let result = self
-            .connection
-            .change_window_attributes(self.screen.root, &change)?
-            .check();
-        self.set_focus_to_root()?;
-        if let Err(ReplyError::X11Error(ref error)) = result {
-            if error.error_kind == ErrorKind::Access {
-                println!("another wm is running");
-                exit(1);
-            } else {
-            }
-        } else {
-            println!("became wm");
-        }
         Ok(())
     }
 
@@ -554,11 +515,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             bar_text.as_bytes(),
         )?;
 
-        self.draw_status_bar(&wm_state.bar, self.id_graphics_context)?;
+        self.draw_status_bar(&wm_state.bar)?;
         Ok(())
     }
 
-    pub fn draw_status_bar(&self, w: &WindowState, id: u32) -> Res {
+    pub fn draw_status_bar(&self, w: &WindowState) -> Res {
         let status_text = self.get_window_name(self.screen.root)?;
         self.connection
             .clear_area(
@@ -573,12 +534,34 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection
             .image_text8(
                 w.window,
-                id,
+                self.id_graphics_context,
                 w.width as i16 - status_text.len() as i16 * self.font_width,
                 (w.height as i16 / 2) + self.font_ascent / 3,
                 status_text.as_bytes(),
             )?
             .check()?;
+        Ok(())
+    }
+    pub fn become_window_manager(&self) -> Res {
+        let change = ChangeWindowAttributesAux::default().event_mask(
+            EventMask::SUBSTRUCTURE_REDIRECT
+                | EventMask::SUBSTRUCTURE_NOTIFY
+                | EventMask::KEY_PRESS,
+        );
+        let result = self
+            .connection
+            .change_window_attributes(self.screen.root, &change)?
+            .check();
+        self.set_focus_to_root()?;
+        if let Err(ReplyError::X11Error(ref error)) = result {
+            if error.error_kind == ErrorKind::Access {
+                println!("another wm is running");
+                exit(1);
+            } else {
+            }
+        } else {
+            println!("became wm");
+        }
         Ok(())
     }
 }

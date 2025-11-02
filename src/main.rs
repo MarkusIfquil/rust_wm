@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     thread::spawn(move || -> Result<(), ReplyOrIdError> {
         let (conn, s) = match x11rb::connect(None) {
             Ok((c, s)) => (c, s),
-            Err(_) => return Err(ReplyOrIdError::IdsExhausted),
+            Err(_) => return Err(ReplyOrIdError::ConnectionError(x11rb::errors::ConnectionError::UnknownError)),
         };
 
         let other_handler = match ConnectionHandler::new(&conn, s) {
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         loop {
-            other_handler.draw_status_bar(&bar_window, other_handler.id_graphics_context)?;
+            other_handler.draw_status_bar(&bar_window)?;
             thread::sleep(Duration::from_secs(1));
         }
     });

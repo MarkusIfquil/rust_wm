@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::actions::*;
 use crate::config::Config;
 use crate::keys::HotkeyAction;
@@ -9,7 +11,7 @@ use x11rb::protocol::xproto::*;
 
 type Window = u32;
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum WindowGroup {
     Master,
     Stack,
@@ -114,17 +116,11 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .windows
     }
 
-    pub fn find_window_by_id(&self, window: Window) -> Option<&WindowState> {
-        for tag in self.tags.iter() {
-            if let Some(f) = tag
-                .windows
-                .iter()
-                .find(|w| w.window == window || w.frame_window == window)
-            {
-                return Some(f);
-            }
-        }
-        None
+    pub fn get_window_state(&self, window: Window) -> Option<&WindowState> {
+        self.tags[self.active_tag]
+            .windows
+            .iter()
+            .find(|w| w.window == window || w.frame_window == window)
     }
 
     pub fn handle_event(&mut self, event: Event) -> Res {
@@ -133,10 +129,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             Event::MapRequest(e) => self.handle_map_request(e)?,
             Event::KeyPress(e) => self.handle_keypress(e)?,
             Event::EnterNotify(e) => self.handle_enter(e),
-            Event::ReparentNotify(e) => println!("EVENT REPARENT parent {} window {} event {}",e.parent, e.window, e.event),
-            Event::Error(e) => {
-                println!("GOT ERROR: {e:?}");
-            }
             _ => {}
         };
         Ok(())
@@ -147,6 +139,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             "EVENT UNMAP window {} event {} from config {} response {}",
             event.window, event.event, event.from_configure, event.response_type
         );
+
         self.get_mut_active_window_group()
             .retain(|w| w.window != event.window);
         self.set_tag_focus_to_master();
@@ -158,7 +151,8 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             "EVENT MAP window {} parent {} response {}",
             event.window, event.parent, event.response_type
         );
-        match self.find_window_by_id(event.window) {
+
+        match self.get_window_state(event.window) {
             None => {
                 println!("state map: {}", event.window);
                 self.manage_new_window(event.window)?;
@@ -170,6 +164,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
         println!("EVENT KEYPRESS code {} sym {:?}", event.detail, event.state);
+
         let action = match self.connection_handler.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
@@ -190,8 +185,11 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_enter(&mut self, event: EnterNotifyEvent) {
-        println!("EVENT ENTER child {} detail {:?} event {}",event.child, event.detail, event.event);
-        self.tags[self.active_tag].focus = match self.find_window_by_id(event.child) {
+        println!(
+            "EVENT ENTER child {} detail {:?} event {}",
+            event.child, event.detail, event.event
+        );
+        self.tags[self.active_tag].focus = match self.get_window_state(event.child) {
             Some(w) => Some(w.window),
             None if self.tags[self.active_tag].windows.is_empty() => None,
             None => self.tags[self.active_tag].focus,
@@ -200,10 +198,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
 
     fn manage_new_window(&mut self, window: Window) -> Res {
         println!("managing new window {window}");
-
         let window = WindowState::new(window, self.connection_handler.connection.generate_id()?)?;
-
-        //side effect
         self.connection_handler.create_frame_of_window(&window)?;
 
         self.add_window(window);
@@ -249,7 +244,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
 
         let focus_window = self.connection_handler.get_focus()?;
 
-        let state = if let Some(s) = self.find_window_by_id(focus_window) {
+        let state = if let Some(s) = self.get_window_state(focus_window) {
             *s
         } else {
             return Ok(());
@@ -354,7 +349,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         match self.tags[self.active_tag].focus {
             Some(w) => {
                 self.connection_handler
-                    .set_focus_window(self, self.find_window_by_id(w).unwrap())?;
+                    .set_focus_window(self, self.get_window_state(w).unwrap())?;
             }
             None => {
                 self.connection_handler.set_focus_to_root()?;
