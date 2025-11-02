@@ -158,6 +158,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
+    pub fn refresh(&self, wm_state: &ManagerState<C>) -> Res {
+        self.draw_bar(wm_state, wm_state.tags[wm_state.active_tag].focus)?;        
+        Ok(())
+    }
+
     pub fn handle_event(&self, wm_state: &ManagerState<C>, event: Event) -> Res {
         match event {
             Event::MapRequest(e) => self.handle_map(wm_state, e),
@@ -310,6 +315,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
         self.draw_bar(wm_state, Some(window.window))?;
         Ok(())
+    }
+
+    pub fn get_focus(&self) -> Result<u32,ReplyOrIdError> {
+        Ok(self.connection.get_input_focus()?.reply()?.focus)
     }
 
     pub fn config_window(&self, window: &WindowState) -> Res {

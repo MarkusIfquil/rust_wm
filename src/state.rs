@@ -207,20 +207,28 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             return Ok(());
         }
         println!("changing tag to {tag}");
-        //unmap old tag
-        self.tags[self.active_tag]
-            .windows
-            .iter()
-            .try_for_each(|w| self.connection_handler.unmap(w))?;
-
+        self.unmap_all()?;
         self.active_tag = tag;
-        //map new tag
+        self.map_all()?;
+        Ok(())
+    }
+
+    fn map_all(&mut self) -> Res {
         self.get_active_window_group()
             .iter()
-            .try_for_each(|w| self.connection_handler.map(w))?;
+            .try_for_each(|w| self.connection_handler.map(w))
+    }
 
-        self.connection_handler.draw_bar(&self, None)?;
-        Ok(())
+    fn unmap_all(&mut self) -> Res {
+        self.get_active_window_group()
+            .iter()
+            .try_for_each(|w| self.connection_handler.unmap(w))
+    }
+
+    fn config_all(&mut self) -> Res {
+        self.get_active_window_group()
+            .iter()
+            .try_for_each(|w| self.connection_handler.config_window(w))
     }
 
     fn move_window(&mut self, tag: usize) -> Res {
@@ -230,12 +238,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         }
         println!("moving window to tag {tag}");
 
-        let focus_window = self
-            .connection_handler
-            .connection
-            .get_input_focus()?
-            .reply()?
-            .focus;
+        let focus_window = self.connection_handler.get_focus()?;
 
         let state = if let Some(s) = self.find_window_by_id(focus_window) {
             *s
@@ -269,7 +272,9 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     fn refresh(&mut self) -> Res {
         self.set_last_master_others_stack()?;
         self.tile_windows()?;
+        self.config_all()?;
         self.refresh_focus()?;
+        self.connection_handler.refresh(self)?;
         self.print_state();
         Ok(())
     }
@@ -333,9 +338,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                     _ => Ok(()),
                 }
             })?;
-        self.get_active_window_group()
-            .iter()
-            .try_for_each(|w| self.connection_handler.config_window(w))?;
         Ok(())
     }
 
