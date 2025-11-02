@@ -133,6 +133,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             Event::MapRequest(e) => self.handle_map_request(e)?,
             Event::KeyPress(e) => self.handle_keypress(e)?,
             Event::EnterNotify(e) => self.handle_enter(e),
+            Event::ReparentNotify(e) => println!("EVENT REPARENT parent {} window {} event {}",e.parent, e.window, e.event),
             Event::Error(e) => {
                 println!("GOT ERROR: {e:?}");
             }
@@ -142,7 +143,10 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_unmap_notify(&mut self, event: UnmapNotifyEvent) -> Res {
-        println!("state unmap: {}", event.window);
+        println!(
+            "EVENT UNMAP window {} event {} from config {} response {}",
+            event.window, event.event, event.from_configure, event.response_type
+        );
         self.get_mut_active_window_group()
             .retain(|w| w.window != event.window);
         self.set_tag_focus_to_master();
@@ -150,6 +154,10 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_map_request(&mut self, event: MapRequestEvent) -> Res {
+        println!(
+            "EVENT MAP window {} parent {} response {}",
+            event.window, event.parent, event.response_type
+        );
         match self.find_window_by_id(event.window) {
             None => {
                 println!("state map: {}", event.window);
@@ -161,7 +169,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
-        println!("handling state keypress {} {:?}", event.detail, event.state);
+        println!("EVENT KEYPRESS code {} sym {:?}", event.detail, event.state);
         let action = match self.connection_handler.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
@@ -182,6 +190,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
     }
 
     fn handle_enter(&mut self, event: EnterNotifyEvent) {
+        println!("EVENT ENTER child {} detail {:?} event {}",event.child, event.detail, event.event);
         self.tags[self.active_tag].focus = match self.find_window_by_id(event.child) {
             Some(w) => Some(w.window),
             None if self.tags[self.active_tag].windows.is_empty() => None,

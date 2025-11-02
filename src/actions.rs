@@ -165,7 +165,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
     pub fn handle_event(&self, wm_state: &ManagerState<C>, event: Event) -> Res {
         match event {
-            Event::MapRequest(e) => self.handle_map(wm_state, e),
+            // Event::MapRequest(e) => self.handle_map(wm_state, e),
             Event::UnmapNotify(e) => self.handle_unmap(wm_state, e),
             Event::ConfigureRequest(e) => self.handle_config(wm_state, e),
             Event::EnterNotify(e) => self.handle_enter(wm_state, e),
@@ -174,12 +174,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    fn handle_map(&self, wm_state: &ManagerState<C>, event: MapRequestEvent) -> Res {
-        match wm_state.find_window_by_id(event.window) {
-            Some(w) => self.create_frame_of_window(w),
-            None => Ok(()),
-        }
-    }
+    // fn handle_map(&self, wm_state: &ManagerState<C>, event: MapRequestEvent) -> Res {
+        // match wm_state.find_window_by_id(event.window) {
+            // Some(w) => self.create_frame_of_window(w),
+            // None => Ok(()),
+        // }
+    // }
 
     fn handle_unmap(&self, wm_state: &ManagerState<C>, event: UnmapNotifyEvent) -> Res {
         match wm_state.find_window_by_id(event.window) {
@@ -189,6 +189,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     fn handle_config(&self, wm_state: &ManagerState<C>, event: ConfigureRequestEvent) -> Res {
+        println!("EVENT CONFIG w {} x {} y {} w {} h {}",event.window, event.x, event.y, event.width, event.height);
         match wm_state.find_window_by_id(event.window) {
             Some(_) => self.config_from_event(event),
             None => Ok(()),
@@ -253,7 +254,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                         | EventMask::SUBSTRUCTURE_NOTIFY
                         | EventMask::BUTTON_PRESS
                         | EventMask::BUTTON_RELEASE
-                        // | EventMask::POINTER_MOTION
                         | EventMask::ENTER_WINDOW,
                 )
                 .background_pixel(self.graphics.0)
