@@ -29,7 +29,7 @@ fn hex_color_to_rgb(hex: &str) -> Result<(u16, u16, u16), ParseIntError> {
 pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
-    pub key_handler: KeyHandler<'a, C>,
+    pub key_handler: KeyHandler,
     pub id_graphics_context: Gcontext,
     id_inverted_graphics_context: Gcontext,
     pub graphics: (u32, u32, u32),
@@ -130,6 +130,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         );
         connection.close_font(id_font)?;
 
+        let key_handler = KeyHandler::new(connection, &config)?;
+
         Ok(ConnectionHandler {
             connection,
             screen,
@@ -138,7 +140,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             graphics: (main_color, secondary_color, id_font),
             font_ascent: f.ascent,
             font_width: f.character_width as i16,
-            key_handler: KeyHandler::new(connection, screen.root)?.get_hotkeys(&config)?,
+            key_handler,
             atoms: HashMap::from([
                 ("WM_PROTOCOLS".to_string(), wm_protocols),
                 ("WM_DELETE_WINDOW".to_string(), wm_delete_window),
@@ -540,6 +542,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 status_text.as_bytes(),
             )?
             .check()?;
+        println!("DRAWING STATUS");
         Ok(())
     }
     pub fn become_window_manager(&self) -> Res {

@@ -11,33 +11,124 @@ fonts = [
     "fixed"
 ]
 
-hotkeys = [
-    ["CONTROL|MOD",  "Return",       "spawn",     "alacritty"],
-    ["MOD",          "q",            "exit",      ""],
-    ["CONTROL|MOD",  "q",            "spawn",     "killall rust_wm"],
-    ["MOD",          "c",            "spawn",     "rofi -show drun"],
+# terminal
+[[hotkeys]]
+modifiers = "CONTROL|MOD"
+key = "Return"
+action = { Spawn = "alacritty" }
 
-    ["MOD",          "1",            "switchtag", "1"],
-    ["MOD",          "2",            "switchtag", "2"],
-    ["MOD",          "3",            "switchtag", "3"],
-    ["MOD",          "4",            "switchtag", "4"],
-    ["MOD",          "5",            "switchtag", "5"],
-    ["MOD",          "6",            "switchtag", "6"],
-    ["MOD",          "7",            "switchtag", "7"],
-    ["MOD",          "8",            "switchtag", "8"],
-    ["MOD",          "9",            "switchtag", "9"],
-    ["MOD|SHIFT",    "1",            "movewindow", "1"],
-    ["MOD|SHIFT",    "2",            "movewindow", "2"],
-    ["MOD|SHIFT",    "3",            "movewindow", "3"],
-    ["MOD|SHIFT",    "4",            "movewindow", "4"],
-    ["MOD|SHIFT",    "5",            "movewindow", "5"],
-    ["MOD|SHIFT",    "6",            "movewindow", "6"],
-    ["MOD|SHIFT",    "7",            "movewindow", "7"],
-    ["MOD|SHIFT",    "8",            "movewindow", "8"],
-    ["MOD|SHIFT",    "9",            "movewindow", "9"],
-    ["",             "XF86_AudioRaiseVolume",           "spawn",      "/usr/bin/pactl set-sink-volume 0 +5%"],
-    ["",             "XF86_AudioLowerVolume",           "spawn",      "/usr/bin/pactl set-sink-volume 0 -5%"],
-    ["",             "XF86_AudioMute",                  "spawn",      "/usr/bin/pactl set-sink-mute 0 toggle"],
-    ["",             "XF86_MonBrightnessUp",            "spawn",      "sudo light -A 5"],
-    ["",             "XF86_MonBrightnessDown",          "spawn",      "sudo light -U 5"],
-]
+# close window
+[[hotkeys]]
+modifiers = "MOD"
+key = "q"
+action = "ExitFocusedWindow"
+
+# quit manager
+[[hotkeys]]
+modifiers = "CONTROL|MOD"
+key = "q"
+action = { Spawn = "killall rust_wm" }
+
+# launch app
+[[hotkeys]]
+modifiers = "MOD"
+key = "c"
+action = { Spawn = "rofi -show drun" }
+
+# tag switch
+[[hotkeys]]
+modifiers = "MOD"
+key = "1"
+action = { SwitchTag = 1 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "2"
+action = { SwitchTag = 2 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "3"
+action = { SwitchTag = 3 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "4"
+action = { SwitchTag = 4 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "5"
+action = { SwitchTag = 5 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "6"
+action = { SwitchTag = 6 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "7"
+action = { SwitchTag = 7 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "8"
+action = { SwitchTag = 8 }
+[[hotkeys]]
+modifiers = "MOD"
+key = "9"
+action = { SwitchTag = 9 }
+
+# move window to tag
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "1"
+action = { MoveWindow = 1 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "2"
+action = { MoveWindow = 2 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "3"
+action = { MoveWindow = 3 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "4"
+action = { MoveWindow = 4 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "5"
+action = { MoveWindow = 5 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "6"
+action = { MoveWindow = 6 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "7"
+action = { MoveWindow = 7 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "8"
+action = { MoveWindow = 8 }
+[[hotkeys]]
+modifiers = "MOD|SHIFT"
+key = "9"
+action = { MoveWindow = 9 }
+
+# media
+[[hotkeys]]
+modifiers = ""
+key = "XF86_AudioRaiseVolume"
+action = { Spawn = "/usr/bin/pactl set-sink-volume 0 +5%" }
+[[hotkeys]]
+modifiers = ""
+key = "XF86_AudioLowerVolume"
+action = { Spawn = "/usr/bin/pactl set-sink-volume 0 -5%" }
+[[hotkeys]]
+modifiers = ""
+key = "XF86_AudioMute"
+action = { Spawn = "/usr/bin/pactl set-sink-mute 0 toggle" }
+[[hotkeys]]
+modifiers = ""
+key = "XF86_MonBrightnessUp"
+action = { Spawn = "sudo light -A 5" }
+[[hotkeys]]
+modifiers = ""
+key = "XF86_MonBrightnessDown"
+action = { Spawn = "sudo light -U 5" }

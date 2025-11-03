@@ -1,15 +1,15 @@
+use std::collections::HashMap;
+
+use serde::Deserialize;
 use x11rb::{
     connection::Connection,
     errors::ReplyOrIdError,
-    protocol::xproto::{
-        ConnectionExt, GetKeyboardMappingReply, GrabMode, KeyButMask, KeyPressEvent, ModMask,
-        Window,
-    },
+    protocol::xproto::{ConnectionExt, KeyButMask, KeyPressEvent, ModMask},
 };
 use xkeysym::{KeyCode, Keysym};
 
 use crate::config::Config;
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub enum HotkeyAction {
     Spawn(String),
     ExitFocusedWindow,
@@ -18,71 +18,49 @@ pub enum HotkeyAction {
 }
 #[derive(Debug)]
 pub struct Hotkey {
-    pub _sym: Keysym,
+    _sym: Keysym,
     pub code: KeyCode,
-    pub mask: KeyButMask,
-    modifier: ModMask,
-    pub action: HotkeyAction,
+    mask: KeyButMask,
+    pub modifier: ModMask,
+    action: HotkeyAction,
 }
 
-impl Hotkey {
-    fn new<C: Connection>(
-        handler: &KeyHandler<C>,
-        sym: Keysym,
-        mask: KeyButMask,
-        action: HotkeyAction,
-    ) -> Self {
-        Hotkey {
-            _sym: sym,
-            code: handler
-                .sym_to_code(&sym)
-                .expect("expected sym to have code"),
-            mask: mask,
-            modifier: ModMask::from(mask.bits()),
-            action: action,
-        }
-    }
-}
-
-pub struct KeyHandler<'a, C: Connection> {
-    mapping: GetKeyboardMappingReply,
-    min_code: u8,
-    max_code: u8,
+pub struct KeyHandler {
     pub hotkeys: Vec<Hotkey>,
-    root: Window,
-    connection: &'a C,
 }
 
-impl<'a, C: Connection> KeyHandler<'a, C> {
-    pub fn new(connection: &'a C, root: Window) -> Result<Self, ReplyOrIdError> {
-        Ok(KeyHandler {
-            hotkeys: Vec::default(),
-            mapping: connection
-                .get_keyboard_mapping(
-                    connection.setup().min_keycode,
-                    connection.setup().max_keycode - connection.setup().min_keycode + 1,
-                )?
-                .reply()?,
-            min_code: connection.setup().min_keycode,
-            max_code: connection.setup().max_keycode - connection.setup().min_keycode + 1,
-            root,
-            connection,
-        })
-    }
+impl KeyHandler {
+    pub fn new<C: Connection>(connection: &C, config: &Config) -> Result<Self, ReplyOrIdError> {
+        let min = connection.setup().min_keycode;
+        let max = connection.setup().max_keycode;
 
-    pub fn get_registered_hotkey(&self, mask: KeyButMask, code_raw: u32) -> Option<&Hotkey> {
-        self.hotkeys
-            .iter()
-            .find(|h| mask == h.mask && code_raw == h.code.raw())
-    }
+        let mapping = connection
+            .get_keyboard_mapping(min, max - min + 1)?
+            .reply()?;
 
-    pub fn get_hotkeys(self, config: &Config) -> Result<Self, ReplyOrIdError> {
-        let keys = config
+        let sym_code: HashMap<Keysym, KeyCode> = (min..=max)
+            .filter_map(|x| {
+                if let Some(s) = xkeysym::keysym(
+                    x.into(),
+                    0,
+                    min.into(),
+                    mapping.keysyms_per_keycode,
+                    mapping.keysyms.as_slice(),
+                ) {
+                    Some((s, KeyCode::new(x.into())))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let hotkeys: Vec<Hotkey> = config
             .hotkeys
             .iter()
-            .map(|h| {
-                // println!("got vec {h:?}");
-                let modifiers = h[0]
+            .cloned()
+            .map(|c| {
+                let modi = c
+                    .modifier
                     .split("|")
                     .map(|m| match m {
                         "CONTROL" => KeyButMask::CONTROL,
@@ -91,7 +69,8 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
                         _ => KeyButMask::default(),
                     })
                     .fold(KeyButMask::default(), |acc, m| acc | m);
-                let sym = match h[1].as_str() {
+
+                let sym = match c.key.as_str() {
                     "Return" => Keysym::Return,
                     "XF86_MonBrightnessUp" => Keysym::XF86_MonBrightnessUp,
                     "XF86_MonBrightnessDown" => Keysym::XF86_MonBrightnessDown,
@@ -100,26 +79,24 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
                     "XF86_AudioMute" => Keysym::XF86_AudioMute,
                     c => Keysym::from_char(c.chars().next().unwrap_or_default()),
                 };
-                let action = match h[2].as_str() {
-                    "spawn" => HotkeyAction::Spawn(h[3].clone()),
-                    "exit" => HotkeyAction::ExitFocusedWindow,
-                    "switchtag" => HotkeyAction::SwitchTag(h[3].clone().parse().unwrap_or(0)),
-                    "movewindow" => HotkeyAction::MoveWindow(h[3].clone().parse().unwrap_or(0)),
-                    _ => unimplemented!(),
-                };
 
-                // println!("{:?} {:?} {:?}",modifiers,sym,action);
-
-                Hotkey::new(&self, sym, modifiers, action)
+                Hotkey {
+                    _sym: sym,
+                    code: *sym_code.get(&sym).expect("expected sym to have code"),
+                    mask: modi,
+                    modifier: ModMask::from(modi.bits()),
+                    action: c.action,
+                }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        keys.iter().try_for_each(|h| self.listen_to_hotkey(&h))?;
+        Ok(KeyHandler { hotkeys })
+    }
 
-        Ok(Self {
-            hotkeys: keys,
-            ..self
-        })
+    fn get_registered_hotkey(&self, mask: KeyButMask, code_raw: u32) -> Option<&Hotkey> {
+        self.hotkeys
+            .iter()
+            .find(|h| mask == h.mask && code_raw == h.code.raw())
     }
 
     pub fn get_action(&self, event: KeyPressEvent) -> Option<HotkeyAction> {
@@ -128,38 +105,5 @@ impl<'a, C: Connection> KeyHandler<'a, C> {
         } else {
             None
         }
-    }
-
-    pub fn code_to_sym(&self, code: u8) -> Option<Keysym> {
-        xkeysym::keysym(
-            code.into(),
-            0,
-            self.min_code.into(),
-            self.mapping.keysyms_per_keycode,
-            self.mapping.keysyms.as_slice(),
-        )
-    }
-
-    fn sym_to_code(&self, sym: &Keysym) -> Option<KeyCode> {
-        for i in self.min_code..=self.max_code {
-            if let Some(s) = self.code_to_sym(i) {
-                if s == *sym {
-                    return Some(KeyCode::new(i.into()));
-                }
-            }
-        }
-        None
-    }
-
-    fn listen_to_hotkey(&self, hotkey: &Hotkey) -> Result<(), ReplyOrIdError> {
-        self.connection.grab_key(
-            true,
-            self.root,
-            hotkey.modifier,
-            hotkey.code,
-            GrabMode::ASYNC,
-            GrabMode::ASYNC,
-        )?;
-        Ok(())
     }
 }
