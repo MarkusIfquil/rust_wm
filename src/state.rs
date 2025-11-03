@@ -1,8 +1,6 @@
 use std::fmt::Debug;
 
 use crate::actions::*;
-use crate::config::Config;
-use crate::config::ConfigDeserialized;
 use crate::keys::HotkeyAction;
 
 use x11rb::connection::Connection;
@@ -65,20 +63,16 @@ impl Tag {
     }
 }
 
-pub struct ManagerState<'a, C: Connection> {
+pub struct ManagerState {
     pub tags: Vec<Tag>,
     pub active_tag: usize,
     pub bar: WindowState,
-    pub config: Config,
-    connection_handler: &'a ConnectionHandler<'a, C>,
 }
 
 type Res = Result<(), ReplyOrIdError>;
 
-impl<'a, C: Connection> ManagerState<'a, C> {
-    pub fn new(handler: &'a ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
-        let config = Config::from(ConfigDeserialized::new());
-
+impl ManagerState {
+    pub fn new<C: Connection>(handler: &ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
         Ok(ManagerState {
             tags: (0..=8).map(|n| Tag::new(n)).collect(),
             bar: WindowState {
@@ -91,8 +85,6 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                 group: WindowGroup::None,
             },
             active_tag: 0,
-            connection_handler: handler,
-            config,
         })
     }
 
@@ -121,18 +113,26 @@ impl<'a, C: Connection> ManagerState<'a, C> {
             .find(|w| w.window == window || w.frame_window == window)
     }
 
-    pub fn handle_event(&mut self, event: Event) -> Res {
+    pub fn handle_event<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        event: Event,
+    ) -> Res {
         match event {
-            Event::UnmapNotify(e) => self.handle_unmap_notify(e)?,
-            Event::MapRequest(e) => self.handle_map_request(e)?,
-            Event::KeyPress(e) => self.handle_keypress(e)?,
+            Event::UnmapNotify(e) => self.handle_unmap_notify(conn, e)?,
+            Event::MapRequest(e) => self.handle_map_request(conn, e)?,
+            Event::KeyPress(e) => self.handle_keypress(conn, e)?,
             Event::EnterNotify(e) => self.handle_enter(e),
             _ => {}
         };
         Ok(())
     }
 
-    fn handle_unmap_notify(&mut self, event: UnmapNotifyEvent) -> Res {
+    fn handle_unmap_notify<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        event: UnmapNotifyEvent,
+    ) -> Res {
         println!(
             "EVENT UNMAP window {} event {} from config {} response {}",
             event.window, event.event, event.from_configure, event.response_type
@@ -141,10 +141,14 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         self.get_mut_active_window_group()
             .retain(|w| w.window != event.window);
         self.set_tag_focus_to_master();
-        self.refresh()
+        self.refresh(conn)
     }
 
-    fn handle_map_request(&mut self, event: MapRequestEvent) -> Res {
+    fn handle_map_request<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        event: MapRequestEvent,
+    ) -> Res {
         println!(
             "EVENT MAP window {} parent {} response {}",
             event.window, event.parent, event.response_type
@@ -153,29 +157,33 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         match self.get_window_state(event.window) {
             None => {
                 println!("state map: {}", event.window);
-                self.manage_new_window(event.window)?;
-                self.refresh()
+                self.manage_new_window(conn, event.window)?;
+                self.refresh(conn)
             }
             Some(_) => Ok(()),
         }
     }
 
-    fn handle_keypress(&mut self, event: KeyPressEvent) -> Res {
+    fn handle_keypress<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        event: KeyPressEvent,
+    ) -> Res {
         println!("EVENT KEYPRESS code {} sym {:?}", event.detail, event.state);
 
-        let action = match self.connection_handler.key_handler.get_action(event) {
+        let action = match conn.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
         };
 
         match action {
             HotkeyAction::SwitchTag(n) => {
-                self.change_active_tag(n as usize - 1)?;
-                self.refresh()?;
+                self.change_active_tag(conn, n as usize - 1)?;
+                self.refresh(conn)?;
             }
             HotkeyAction::MoveWindow(n) => {
-                self.move_window(n as usize - 1)?;
-                self.refresh()?;
+                self.move_window(conn, n as usize - 1)?;
+                self.refresh(conn)?;
             }
             _ => {}
         };
@@ -194,60 +202,64 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         };
     }
 
-    fn manage_new_window(&mut self, window: Window) -> Res {
+    fn manage_new_window<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        window: Window,
+    ) -> Res {
         println!("managing new window {window}");
-        let window = WindowState::new(window, self.connection_handler.connection.generate_id()?)?;
-        self.connection_handler.create_frame_of_window(&window)?;
+        let window = WindowState::new(window, conn.connection.generate_id()?)?;
 
+        conn.create_frame_of_window(&window)?;
         self.add_window(window);
         Ok(())
     }
 
-    fn change_active_tag(&mut self, tag: usize) -> Res {
+    fn change_active_tag<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
         if self.active_tag == tag {
             println!("tried switching to already active tag");
             return Ok(());
         }
         println!("changing tag to {tag}");
-        self.unmap_all()?;
+        self.unmap_all(conn)?;
         self.active_tag = tag;
-        self.map_all()?;
+        self.map_all(conn)?;
         Ok(())
     }
 
-    fn map_all(&mut self) -> Res {
+    fn map_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         self.get_active_window_group()
             .iter()
-            .try_for_each(|w| self.connection_handler.map(w))
+            .try_for_each(|w| conn.map(w))
     }
 
-    fn unmap_all(&mut self) -> Res {
+    fn unmap_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         self.get_active_window_group()
             .iter()
-            .try_for_each(|w| self.connection_handler.unmap(w))
+            .try_for_each(|w| conn.unmap(w))
     }
 
-    fn config_all(&mut self) -> Res {
+    fn config_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         self.get_active_window_group()
             .iter()
-            .try_for_each(|w| self.connection_handler.config_window(w))
+            .try_for_each(|w| conn.config_window(w))
     }
 
-    fn move_window(&mut self, tag: usize) -> Res {
+    fn move_window<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
         if self.active_tag == tag {
             println!("tried moving window to already active tag");
             return Ok(());
         }
         println!("moving window to tag {tag}");
 
-        let focus_window = self.connection_handler.get_focus()?;
+        let focus_window = conn.get_focus()?;
 
         let state = if let Some(s) = self.get_window_state(focus_window) {
             *s
         } else {
             return Ok(());
         };
-        self.connection_handler.unmap(&state)?;
+        conn.unmap(&state)?;
 
         self.tags[tag].windows.push(state);
         self.tags[self.active_tag]
@@ -271,12 +283,12 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         };
     }
 
-    fn refresh(&mut self) -> Res {
+    fn refresh<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         self.set_last_master_others_stack()?;
-        self.tile_windows()?;
-        self.config_all()?;
-        self.refresh_focus()?;
-        self.connection_handler.refresh(self)?;
+        self.tile_windows(conn)?;
+        self.config_all(conn)?;
+        self.refresh_focus(conn)?;
+        conn.refresh(self)?;
         self.print_state();
         Ok(())
     }
@@ -292,13 +304,10 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         Ok(())
     }
 
-    fn tile_windows(&mut self) -> Res {
+    fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         println!("tiling tag {}", self.active_tag);
-        let conf = self.config.clone();
-        let (maxw, maxh) = (
-            self.connection_handler.screen.width_in_pixels,
-            self.connection_handler.screen.height_in_pixels,
-        );
+        let conf = conn.config.clone();
+        let (maxw, maxh) = (conn.screen.width_in_pixels, conn.screen.height_in_pixels);
         let stack_count = self.get_active_window_group().len().clamp(1, 100) - 1;
 
         self.get_mut_active_window_group()
@@ -343,14 +352,13 @@ impl<'a, C: Connection> ManagerState<'a, C> {
         Ok(())
     }
 
-    fn refresh_focus(&self) -> Res {
+    fn refresh_focus<C: Connection>(&self, conn: &ConnectionHandler<C>) -> Res {
         match self.tags[self.active_tag].focus {
             Some(w) => {
-                self.connection_handler
-                    .set_focus_window(self, self.get_window_state(w).unwrap())?;
+                conn.set_focus_window(self, self.get_window_state(w).unwrap())?;
             }
             None => {
-                self.connection_handler.set_focus_to_root()?;
+                conn.set_focus_to_root()?;
             }
         };
         Ok(())

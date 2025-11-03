@@ -30,6 +30,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
     pub font_ascent: i16,
     font_width: i16,
     atoms: HashMap<String, u32>,
+    pub config: Config
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -125,6 +126,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 ("WM_PROTOCOLS".to_string(), wm_protocols),
                 ("WM_DELETE_WINDOW".to_string(), wm_delete_window),
             ]),
+            config
         })
     }
 
@@ -140,12 +142,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn refresh(&self, wm_state: &ManagerState<C>) -> Res {
+    pub fn refresh(&self, wm_state: &ManagerState) -> Res {
         self.draw_bar(wm_state, wm_state.tags[wm_state.active_tag].focus)?;
         Ok(())
     }
 
-    pub fn handle_event(&self, wm_state: &ManagerState<C>, event: Event) -> Res {
+    pub fn handle_event(&self, wm_state: &ManagerState, event: Event) -> Res {
         match event {
             Event::UnmapNotify(e) => self.handle_unmap(wm_state, e),
             Event::ConfigureRequest(e) => self.handle_config(wm_state, e),
@@ -155,14 +157,14 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    fn handle_unmap(&self, wm_state: &ManagerState<C>, event: UnmapNotifyEvent) -> Res {
+    fn handle_unmap(&self, wm_state: &ManagerState, event: UnmapNotifyEvent) -> Res {
         match wm_state.get_window_state(event.window) {
             Some(w) => self.destroy_window(w),
             None => Ok(()),
         }
     }
 
-    fn handle_config(&self, wm_state: &ManagerState<C>, event: ConfigureRequestEvent) -> Res {
+    fn handle_config(&self, wm_state: &ManagerState, event: ConfigureRequestEvent) -> Res {
         println!(
             "EVENT CONFIG w {} x {} y {} w {} h {}",
             event.window, event.x, event.y, event.width, event.height
@@ -173,7 +175,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    fn handle_enter(&self, wm_state: &ManagerState<C>, event: EnterNotifyEvent) -> Res {
+    fn handle_enter(&self, wm_state: &ManagerState, event: EnterNotifyEvent) -> Res {
         println!("got enter wid {} fid {}", event.child, event.event);
         if let Some(w) = wm_state.get_window_state(event.child) {
             return self.set_focus_window(wm_state, w);
@@ -184,7 +186,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    fn handle_keypress(&self, wm_state: &ManagerState<C>, event: KeyPressEvent) -> Res {
+    fn handle_keypress(&self, wm_state: &ManagerState, event: KeyPressEvent) -> Res {
         println!(
             "handling keypress with code {} and modifier {:?}",
             event.detail, event.state
@@ -247,7 +249,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn set_focus_window(&self, wm_state: &ManagerState<C>, window: &WindowState) -> Res {
+    pub fn set_focus_window(&self, wm_state: &ManagerState, window: &WindowState) -> Res {
         println!("setting focus to: {:?}", window.window);
         self.connection
             .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
@@ -259,7 +261,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .try_for_each(|w| {
                 self.connection.configure_window(
                     w.frame_window,
-                    &ConfigureWindowAux::new().border_width(wm_state.config.border_size as u32),
+                    &ConfigureWindowAux::new().border_width(self.config.border_size as u32),
                 )?;
                 self.connection.change_window_attributes(
                     w.frame_window,
@@ -336,7 +338,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    fn kill_focus(&self, wm_state: &ManagerState<C>) -> Res {
+    fn kill_focus(&self, wm_state: &ManagerState) -> Res {
         let focus = match wm_state.tags[wm_state.active_tag].focus {
             Some(f) => f,
             None => return Ok(()),
@@ -399,7 +401,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    pub fn draw_bar(&self, wm_state: &ManagerState<C>, active_window: Option<Window>) -> Res {
+    pub fn draw_bar(&self, wm_state: &ManagerState, active_window: Option<Window>) -> Res {
         let bar_text = match active_window {
             Some(w) => self.get_window_name(w)?,
             None => "".to_owned(),
