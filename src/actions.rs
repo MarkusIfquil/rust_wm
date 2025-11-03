@@ -2,26 +2,27 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::process::exit;
 
-use x11rb::COPY_DEPTH_FROM_PARENT;
-use x11rb::CURRENT_TIME;
-use x11rb::connection::Connection;
-use x11rb::cursor;
-use x11rb::errors::{ReplyError, ReplyOrIdError};
-use x11rb::protocol::{ErrorKind, Event, xproto::*};
-use x11rb::resource_manager;
+use x11rb::{
+    COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
+    connection::Connection,
+    cursor,
+    errors::{ReplyError, ReplyOrIdError},
+    protocol::{ErrorKind, Event, xproto::*},
+    resource_manager,
+};
 
-use crate::config;
-use crate::config::Config;
-use crate::config::ConfigDeserialized;
-use crate::keys::HotkeyAction;
-use crate::keys::KeyHandler;
-use crate::state::*;
+use crate::{
+    config::{self, Config, ConfigDeserialized},
+    keys::{HotkeyAction, KeyHandler},
+    state::*,
+};
 
 type Res = Result<(), ReplyOrIdError>;
 
 pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
     pub screen: &'a Screen,
+    screen_num: usize,
     pub key_handler: KeyHandler,
     pub id_graphics_context: Gcontext,
     id_inverted_graphics_context: Gcontext,
@@ -48,7 +49,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .reply()?
             .atom;
 
-        //set main color
         let main_color = connection
             .alloc_color(
                 screen.default_colormap,
@@ -58,7 +58,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             )?
             .reply()?
             .pixel;
-        //set secondary color
+
         let secondary_color = connection
             .alloc_color(
                 screen.default_colormap,
@@ -81,20 +81,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(main_color)
             .font(id_font);
 
-        //set default cursor
-        let cursor = cursor::Handle::new(
-            connection,
-            screen_num,
-            &resource_manager::new_from_default(connection)?,
-        )?
-        .reply()?
-        .load_cursor(connection, "left_ptr")?;
-        connection.change_window_attributes(
-            screen.root,
-            &ChangeWindowAttributesAux::new().cursor(cursor),
-        )?;
-
-        //try setting font to first available font
         match connection
             .open_font(id_font, config.font.as_bytes())?
             .check()
@@ -104,7 +90,9 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             }
             Err(_) => {
                 println!("BAD FONT, USING DEFAULT");
-                connection.open_font(id_font, config::FONT.as_bytes())?.check()?
+                connection
+                    .open_font(id_font, config::FONT.as_bytes())?
+                    .check()?
             }
         };
 
@@ -118,22 +106,21 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         //get font parameters
         let f = connection.query_font(id_font)?.reply()?.max_bounds;
         println!(
-            "got parameters a{} d{} w{}",
+            "got font parameters ascent {} descent {} width {}",
             f.ascent, f.descent, f.character_width
         );
         connection.close_font(id_font)?;
 
-        let key_handler = KeyHandler::new(connection, &config)?;
-
         Ok(ConnectionHandler {
             connection,
             screen,
+            screen_num,
             id_graphics_context,
             id_inverted_graphics_context,
             graphics: (main_color, secondary_color, id_font),
             font_ascent: f.ascent,
             font_width: f.character_width as i16,
-            key_handler,
+            key_handler: KeyHandler::new(connection, &config)?,
             atoms: HashMap::from([
                 ("WM_PROTOCOLS".to_string(), wm_protocols),
                 ("WM_DELETE_WINDOW".to_string(), wm_delete_window),
@@ -210,11 +197,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
         match action {
             HotkeyAction::Spawn(command) => {
-                let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
-                Command::new(parts[0].clone())
-                    .args(parts[1..].iter())
-                    .spawn()
-                    .expect("cant spawn process");
+                spawn_command(&command);
             }
             HotkeyAction::ExitFocusedWindow => {
                 self.kill_focus(wm_state)?;
@@ -238,13 +221,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             0,
             &CreateWindowAux::new()
                 .event_mask(
-                    EventMask::KEY_PRESS
-                        | EventMask::KEY_RELEASE
-                        | EventMask::EXPOSURE
-                        | EventMask::SUBSTRUCTURE_NOTIFY
-                        | EventMask::BUTTON_PRESS
-                        | EventMask::BUTTON_RELEASE
-                        | EventMask::ENTER_WINDOW,
+                    EventMask::KEY_PRESS | EventMask::SUBSTRUCTURE_NOTIFY | EventMask::ENTER_WINDOW,
                 )
                 .background_pixel(self.graphics.0)
                 .border_pixel(self.graphics.1),
@@ -275,6 +252,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection
             .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
 
+        //set borders
         wm_state
             .get_active_window_group()
             .iter()
@@ -341,7 +319,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn create_bar_window(&self, window: Window) -> Res {
-        println!("creating window: {}", window);
+        println!("creating bar: {}", window);
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
             window,
@@ -358,12 +336,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn kill_focus(&self, wm_state: &ManagerState<C>) -> Res {
-        let focus = if let Some(f) = wm_state.tags[wm_state.active_tag].focus {
-            f
-        } else {
-            return Ok(());
+    fn kill_focus(&self, wm_state: &ManagerState<C>) -> Res {
+        let focus = match wm_state.tags[wm_state.active_tag].focus {
+            Some(f) => f,
+            None => return Ok(()),
         };
+
         println!("killing focus window {focus}");
         self.connection.send_event(
             false,
@@ -441,6 +419,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 .collect::<Vec<_>>(),
         )?;
 
+        //draw indicator that windows are active in tag
         self.connection.poly_fill_rectangle(
             wm_state.bar.window,
             self.id_graphics_context,
@@ -574,4 +553,27 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         })?;
         Ok(())
     }
+
+    pub fn set_cursor(&self) -> Res {
+        let cursor = cursor::Handle::new(
+            self.connection,
+            self.screen_num,
+            &resource_manager::new_from_default(self.connection)?,
+        )?
+        .reply()?
+        .load_cursor(self.connection, "left_ptr")?;
+        self.connection.change_window_attributes(
+            self.screen.root,
+            &ChangeWindowAttributesAux::new().cursor(cursor),
+        )?;
+        Ok(())
+    }
+}
+
+fn spawn_command(command: &str) {
+    let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
+    Command::new(parts[0].clone())
+        .args(parts[1..].iter())
+        .spawn()
+        .expect("cant spawn process");
 }

@@ -4,11 +4,8 @@ mod actions;
 mod config;
 mod keys;
 mod state;
-
 use std::{thread, time::Duration};
-
 use x11rb::{connection::Connection, errors::ReplyOrIdError};
-
 use crate::{actions::ConnectionHandler, state::*};
 
 trait ErrorPrinter {
@@ -36,6 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handler = ConnectionHandler::new(&connection, screen_num)?;
     handler.become_window_manager().print();
     handler.grab_keys()?;
+    handler.set_cursor()?;
 
     let mut wm_state = ManagerState::new(&handler)?;
 
