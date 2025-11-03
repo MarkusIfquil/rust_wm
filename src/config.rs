@@ -1,17 +1,77 @@
+use std::num::ParseIntError;
+
 use serde::Deserialize;
 
 use crate::keys::HotkeyAction;
 
-#[derive(Debug, Clone, Deserialize)]
+pub const BAR_HEIGHT: u32 = 20;
+pub const SPACING: u32 = 10;
+pub const RATIO: f32 = 0.5;
+pub const BORDER_SIZE: u32 = 1;
+pub const MAIN_COLOR: (u16, u16, u16) = (4369, 4369, 6939); // #11111b
+pub const SECONDARY_COLOR: (u16, u16, u16) = (29812, 51143, 60652); // #74c7ec
+pub const FONT: &'static str = "fixed";
+
+fn hex_color_to_rgb(hex: &str) -> Result<(u16, u16, u16), ParseIntError> {
+    Ok((
+        u16::from_str_radix(&hex[1..3], 16)? * 257,
+        u16::from_str_radix(&hex[3..5], 16)? * 257,
+        u16::from_str_radix(&hex[5..7], 16)? * 257,
+    ))
+}
+
+#[derive(Clone)]
 pub struct Config {
-    pub bar_height: u16,
-    pub spacing: u16,
+    pub bar_height: u32,
+    pub spacing: u32,
     pub ratio: f32,
-    pub border_size: u16,
-    pub main_color: String,
-    pub secondary_color: String,
-    pub fonts: Vec<String>,
+    pub border_size: u32,
+    pub main_color: (u16, u16, u16),
+    pub secondary_color: (u16, u16, u16),
+    pub font: String,
     pub hotkeys: Vec<HotkeyConfig>,
+}
+
+impl From<ConfigDeserialized> for Config {
+    fn from(config: ConfigDeserialized) -> Self {
+        let main_color = match hex_color_to_rgb(&config.main_color) {
+            Ok(c) => c,
+            Err(_) => {
+                println!("BAD COLOR VALUE");
+                MAIN_COLOR
+            }
+        };
+        let secondary_color = match hex_color_to_rgb(&config.secondary_color) {
+            Ok(c) => c,
+            Err(_) => {
+                println!("BAD COLOR VALUE");
+                SECONDARY_COLOR
+            }
+        };
+
+        Self {
+            main_color,
+            secondary_color,
+            bar_height: config.bar_height.clamp(0, 1000),
+            spacing: config.spacing.clamp(0, 1000),
+            ratio: config.ratio.clamp(0.0, 1.0),
+            border_size: config.border_size.clamp(0, 1000),
+            font: config.font,
+            hotkeys: config.hotkeys,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigDeserialized {
+    bar_height: u32,
+    spacing: u32,
+    ratio: f32,
+    border_size: u32,
+    main_color: String,
+    secondary_color: String,
+    font: String,
+    hotkeys: Vec<HotkeyConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,27 +81,26 @@ pub struct HotkeyConfig {
     pub action: HotkeyAction,
 }
 
-impl Config {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(toml::from_str(&std::fs::read_to_string("config.toml")?)?)
+impl ConfigDeserialized {
+    pub fn new() -> Self {
+        let config_str = match std::fs::read_to_string("config.toml") {
+            Ok(s) => s,
+            Err(e) => {
+                println!("CONFIG FILE ERROR {e:?}");
+                return Self::default();
+            }
+        };
+        match toml::from_str(&config_str) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("ERROR PARSING CONFIG {e:?}");
+                Self::default()
+            }
+        }
     }
-    pub fn default() -> Self {
-        Config {
-            bar_height: 20,
-            spacing: 10,
-            ratio: 0.5,
-            border_size: 1,
-            main_color: String::from("#11111b"),
-            secondary_color: String::from("#74c7ec"),
-            fonts: vec![
-                String::from("-misc-jetbrainsmononl nfp-medium-r-normal--20-0-0-0-p-0-koi8-e"),
-                String::from(
-                    "-misc-jetbrainsmononl nfp medium-medium-r-normal--0-0-0-0-p-0-iso8859-16",
-                ),
-                String::from("6x13"),
-                String::from("fixed"),
-            ],
-            hotkeys: vec![
+    fn default() -> Self {
+        println!("USING DEFAULT CONFIG");
+        let mut hotkeys = vec![
                 HotkeyConfig {
                     modifier: "CONTROL|MOD".to_string(),
                     key: "Return".to_string(),
@@ -63,126 +122,30 @@ impl Config {
                     action: HotkeyAction::Spawn("rofi -show drun".to_string()),
                 },
                 // tag switch
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "1".to_string(),
-                    action: HotkeyAction::SwitchTag(1),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "2".to_string(),
-                    action: HotkeyAction::SwitchTag(2),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "3".to_string(),
-                    action: HotkeyAction::SwitchTag(3),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "4".to_string(),
-                    action: HotkeyAction::SwitchTag(4),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "5".to_string(),
-                    action: HotkeyAction::SwitchTag(5),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "6".to_string(),
-                    action: HotkeyAction::SwitchTag(6),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "7".to_string(),
-                    action: HotkeyAction::SwitchTag(7),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "8".to_string(),
-                    action: HotkeyAction::SwitchTag(8),
-                },
-                HotkeyConfig {
-                    modifier: "MOD".to_string(),
-                    key: "9".to_string(),
-                    action: HotkeyAction::SwitchTag(9),
-                },
-                // move window to tag
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "1".to_string(),
-                    action: HotkeyAction::MoveWindow(1),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "2".to_string(),
-                    action: HotkeyAction::MoveWindow(2),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "3".to_string(),
-                    action: HotkeyAction::MoveWindow(3),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "4".to_string(),
-                    action: HotkeyAction::MoveWindow(4),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "5".to_string(),
-                    action: HotkeyAction::MoveWindow(5),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "6".to_string(),
-                    action: HotkeyAction::MoveWindow(6),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "7".to_string(),
-                    action: HotkeyAction::MoveWindow(7),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "8".to_string(),
-                    action: HotkeyAction::MoveWindow(8),
-                },
-                HotkeyConfig {
-                    modifier: "MOD|SHIFT".to_string(),
-                    key: "9".to_string(),
-                    action: HotkeyAction::MoveWindow(9),
-                },
-                // media controls
-                HotkeyConfig {
-                    modifier: "".to_string(),
-                    key: "XF86_AudioRaiseVolume".to_string(),
-                    action: HotkeyAction::Spawn("/usr/bin/pactl set-sink-volume 0 +5%".to_string()),
-                },
-                HotkeyConfig {
-                    modifier: "".to_string(),
-                    key: "XF86_AudioLowerVolume".to_string(),
-                    action: HotkeyAction::Spawn("/usr/bin/pactl set-sink-volume 0 -5%".to_string()),
-                },
-                HotkeyConfig {
-                    modifier: "".to_string(),
-                    key: "XF86_AudioMute".to_string(),
-                    action: HotkeyAction::Spawn(
-                        "/usr/bin/pactl set-sink-mute 0 toggle".to_string(),
-                    ),
-                },
-                HotkeyConfig {
-                    modifier: "".to_string(),
-                    key: "XF86_MonBrightnessUp".to_string(),
-                    action: HotkeyAction::Spawn("sudo light -A 5".to_string()),
-                },
-                HotkeyConfig {
-                    modifier: "".to_string(),
-                    key: "XF86_MonBrightnessDown".to_string(),
-                    action: HotkeyAction::Spawn("sudo light -U 5".to_string()),
-                },
-            ],
+            ];
+            hotkeys.extend(
+                (1..=9).map(|x| HotkeyConfig {
+                modifier: "MOD".to_string(),
+                key: x.to_string(),
+                action: HotkeyAction::SwitchTag(x),
+            })
+            .chain((1..=9).map(|x| HotkeyConfig {
+                modifier: "MOD|SHIFT".to_string(),
+                key: x.to_string(),
+                action: HotkeyAction::MoveWindow(x),
+            })
+            )
+            .collect::<Vec<_>>());
+
+        ConfigDeserialized {
+            bar_height: BAR_HEIGHT,
+            spacing: SPACING,
+            ratio: RATIO,
+            border_size: BORDER_SIZE,
+            main_color: String::from("#11111b"),
+            secondary_color: String::from("#74c7ec"),
+            font: FONT.to_owned(),
+            hotkeys,
         }
     }
 }

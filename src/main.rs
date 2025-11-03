@@ -5,15 +5,11 @@ mod config;
 mod keys;
 mod state;
 
-use std::thread;
-use std::time::Duration;
+use std::{thread, time::Duration};
 
-use x11rb::connection::Connection;
-use x11rb::errors::ReplyOrIdError;
-use x11rb::protocol::xproto::{ConnectionExt, GrabMode};
+use x11rb::{connection::Connection, errors::ReplyOrIdError};
 
-use crate::actions::ConnectionHandler;
-use crate::state::*;
+use crate::{actions::ConnectionHandler, state::*};
 
 trait ErrorPrinter {
     fn print(self);
@@ -39,19 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, screen_num) = x11rb::connect(None)?;
     let handler = ConnectionHandler::new(&connection, screen_num)?;
     handler.become_window_manager().print();
-    handler.key_handler.hotkeys.iter().try_for_each(|h| {
-        connection
-            .grab_key(
-                false,
-                handler.screen.root,
-                h.modifier,
-                h.code,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-            )?
-            .check()
-    })?;
-    
+    handler.grab_keys()?;
+
     let mut wm_state = ManagerState::new(&handler)?;
 
     handler.create_bar_window(wm_state.bar.window).print();

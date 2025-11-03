@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use crate::actions::*;
 use crate::config::Config;
+use crate::config::ConfigDeserialized;
 use crate::keys::HotkeyAction;
 
 use x11rb::connection::Connection;
@@ -76,10 +77,7 @@ type Res = Result<(), ReplyOrIdError>;
 
 impl<'a, C: Connection> ManagerState<'a, C> {
     pub fn new(handler: &'a ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
-        let config = match Config::new() {
-            Ok(c) => c,
-            Err(_) => Config::default(),
-        };
+        let config = Config::from(ConfigDeserialized::new());
 
         Ok(ManagerState {
             tags: (0..=8).map(|n| Tag::new(n)).collect(),
@@ -317,7 +315,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                             ((maxw as f32 * (1.0 - conf.ratio)) - ((conf.spacing * 2) as f32))
                                 as u16
                         };
-                        w.height = maxh - (conf.spacing * 2) as u16 - conf.bar_height;
+                        w.height = maxh - (conf.spacing * 2) as u16 - conf.bar_height as u16;
                         Ok(())
                     }
                     WindowGroup::Stack => {
@@ -333,7 +331,7 @@ impl<'a, C: Connection> ManagerState<'a, C> {
                         w.height = if i == 0 {
                             (maxh as usize / stack_count) as u16
                                 - (conf.spacing * 2) as u16
-                                - conf.bar_height
+                                - conf.bar_height as u16
                         } else {
                             (maxh as usize / stack_count) as u16 - (conf.spacing) as u16
                         };

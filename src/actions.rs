@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::num::ParseIntError;
 use std::process::Command;
 use std::process::exit;
 
@@ -11,20 +10,14 @@ use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::{ErrorKind, Event, xproto::*};
 use x11rb::resource_manager;
 
+use crate::config;
 use crate::config::Config;
+use crate::config::ConfigDeserialized;
 use crate::keys::HotkeyAction;
 use crate::keys::KeyHandler;
 use crate::state::*;
 
 type Res = Result<(), ReplyOrIdError>;
-
-fn hex_color_to_rgb(hex: &str) -> Result<(u16, u16, u16), ParseIntError> {
-    Ok((
-        u16::from_str_radix(&hex[1..3], 16)? * 257,
-        u16::from_str_radix(&hex[3..5], 16)? * 257,
-        u16::from_str_radix(&hex[5..7], 16)? * 257,
-    ))
-}
 
 pub struct ConnectionHandler<'a, C: Connection> {
     pub connection: &'a C,
@@ -40,10 +33,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
     pub fn new(connection: &'a C, screen_num: usize) -> Result<Self, ReplyOrIdError> {
-        let config = match Config::new() {
-            Ok(c) => c,
-            Err(_) => Config::default(),
-        };
+        let config = Config::from(ConfigDeserialized::new());
         let screen = &connection.setup().roots[screen_num];
         let id_graphics_context = connection.generate_id()?;
         let id_inverted_graphics_context = connection.generate_id()?;
@@ -59,15 +49,23 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .atom;
 
         //set main color
-        let (r, g, b) = hex_color_to_rgb(&config.main_color).unwrap_or_default();
         let main_color = connection
-            .alloc_color(screen.default_colormap, r, g, b)?
+            .alloc_color(
+                screen.default_colormap,
+                config.main_color.0,
+                config.main_color.1,
+                config.main_color.2,
+            )?
             .reply()?
             .pixel;
         //set secondary color
-        let (r, g, b) = hex_color_to_rgb(&config.secondary_color).unwrap_or_default();
         let secondary_color = connection
-            .alloc_color(screen.default_colormap, r, g, b)?
+            .alloc_color(
+                screen.default_colormap,
+                config.secondary_color.0,
+                config.secondary_color.1,
+                config.secondary_color.2,
+            )?
             .reply()?
             .pixel;
 
@@ -97,23 +95,18 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         )?;
 
         //try setting font to first available font
-        config
-            .fonts
-            .iter()
-            .try_for_each(|f| {
-                if let Ok(c) = connection.open_font(id_font, f.as_bytes()) {
-                    match c.check() {
-                        Ok(_) => {
-                            println!("setting font to {f}");
-                            Err(())
-                        }
-                        Err(_) => Ok(()),
-                    }
-                } else {
-                    Ok(())
-                }
-            })
-            .unwrap_or(());
+        match connection
+            .open_font(id_font, config.font.as_bytes())?
+            .check()
+        {
+            Ok(_) => {
+                println!("setting font to {}", config.font);
+            }
+            Err(_) => {
+                println!("BAD FONT, USING DEFAULT");
+                connection.open_font(id_font, config::FONT.as_bytes())?.check()?
+            }
+        };
 
         connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
         connection.create_gc(
@@ -542,7 +535,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 status_text.as_bytes(),
             )?
             .check()?;
-        println!("DRAWING STATUS");
         Ok(())
     }
     pub fn become_window_manager(&self) -> Res {
@@ -565,6 +557,21 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         } else {
             println!("became wm");
         }
+        Ok(())
+    }
+    pub fn grab_keys(&self) -> Res {
+        self.key_handler.hotkeys.iter().try_for_each(|h| {
+            self.connection
+                .grab_key(
+                    false,
+                    self.screen.root,
+                    h.modifier,
+                    h.code,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                )?
+                .check()
+        })?;
         Ok(())
     }
 }

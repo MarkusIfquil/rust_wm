@@ -19,10 +19,10 @@ pub enum HotkeyAction {
 #[derive(Debug)]
 pub struct Hotkey {
     _sym: Keysym,
-    pub code: KeyCode,
     mask: KeyButMask,
-    pub modifier: ModMask,
     action: HotkeyAction,
+    pub code: KeyCode,
+    pub modifier: ModMask,
 }
 
 pub struct KeyHandler {
@@ -31,13 +31,16 @@ pub struct KeyHandler {
 
 impl KeyHandler {
     pub fn new<C: Connection>(connection: &C, config: &Config) -> Result<Self, ReplyOrIdError> {
+        //get min-max code
         let min = connection.setup().min_keycode;
         let max = connection.setup().max_keycode;
 
+        //get mapping
         let mapping = connection
             .get_keyboard_mapping(min, max - min + 1)?
             .reply()?;
 
+        //get sym-code pairings
         let sym_code: HashMap<Keysym, KeyCode> = (min..=max)
             .filter_map(|x| {
                 if let Some(s) = xkeysym::keysym(
@@ -54,6 +57,7 @@ impl KeyHandler {
             })
             .collect();
 
+        //get config hotkeys
         let hotkeys: Vec<Hotkey> = config
             .hotkeys
             .iter()
