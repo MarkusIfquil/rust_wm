@@ -113,7 +113,7 @@ impl ConfigDeserialized {
             // terminal
             HotkeyConfig {
                 modifiers: "CONTROL|MOD".to_string(),
-                key: "Return".to_string(),
+                key: "XK_Return".to_string(),
                 action: HotkeyAction::Spawn("alacritty".to_string()),
             },
             // browser
@@ -180,6 +180,12 @@ impl ConfigDeserialized {
                 modifiers: "MOD".to_string(),
                 key: "XK_Right".to_string(),
                 action: HotkeyAction::NextTag(1),
+            },
+            // swap master
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "XK_Return".to_string(),
+                action: HotkeyAction::SwapMaster,
             },
         ];
         hotkeys.extend(

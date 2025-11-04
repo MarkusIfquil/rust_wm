@@ -18,6 +18,7 @@ pub enum HotkeyAction {
     ChangeRatio(f32),
     NextFocus(i16),
     NextTag(i16),
+    SwapMaster,
 }
 
 #[derive(Debug)]
@@ -80,7 +81,7 @@ impl KeyHandler {
                     .fold(KeyButMask::default(), |acc, m| acc | m);
 
                 let sym = match c.key.as_str() {
-                    "Return" => Keysym::Return,
+                    "XK_Return" => Keysym::Return,
                     "XF86_MonBrightnessUp" => Keysym::XF86_MonBrightnessUp,
                     "XF86_MonBrightnessDown" => Keysym::XF86_MonBrightnessDown,
                     "XF86_AudioRaiseVolume" => Keysym::XF86_AudioRaiseVolume,

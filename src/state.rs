@@ -113,6 +113,13 @@ impl ManagerState {
             .find(|w| w.window == window || w.frame_window == window)
     }
 
+    fn get_index_of_window(&self, window: Window) -> Option<usize> {
+        self.tags[self.active_tag]
+            .windows
+            .iter()
+            .position(|w| w.window == window || w.frame_window == window)
+    }
+
     pub fn handle_event<C: Connection>(
         &mut self,
         conn: &ConnectionHandler<C>,
@@ -219,7 +226,7 @@ impl ManagerState {
                 self.tiling.ratio = (self.tiling.ratio + change).clamp(0.1, 0.9);
             }
             HotkeyAction::NextFocus(change) => {
-                self.switch_focus_next(change)?;
+                self.switch_focus_next(change);
             }
             HotkeyAction::NextTag(change) => {
                 self.change_active_tag(
@@ -227,15 +234,39 @@ impl ManagerState {
                     (self.active_tag as i16 + change).rem_euclid(9) as usize,
                 )?;
             }
+            HotkeyAction::SwapMaster => {
+                self.swap_master();
+            }
         };
         self.refresh(conn)?;
         Ok(())
     }
 
-    fn switch_focus_next(&mut self, change: i16) -> Res {
+    fn swap_master(&mut self) {
         let focus_window = match self.tags[self.active_tag].focus {
             Some(w) => w,
-            None => return Ok(()),
+            None => return,
+        };
+        let len = self.tags[self.active_tag].windows.len();
+        let mut master = self.tags[self.active_tag].windows[len - 1].window;
+        if master == focus_window {
+            master = self.tags[self.active_tag].windows[len - 2].window;
+        }
+        let index_f = match self.get_index_of_window(focus_window) {
+            Some(i) => i,
+            None => return,
+        };
+        let index_m = match self.get_index_of_window(master) {
+            Some(i) => i,
+            None => return,
+        };
+        self.tags[self.active_tag].windows.swap(index_f, index_m);
+    }
+
+    fn switch_focus_next(&mut self, change: i16) {
+        let focus_window = match self.tags[self.active_tag].focus {
+            Some(w) => w,
+            None => return,
         };
         let focus_index = (match self
             .get_active_tag()
@@ -243,13 +274,11 @@ impl ManagerState {
             .position(|w| w.window == focus_window)
         {
             Some(i) => i,
-            None => return Ok(()),
+            None => return,
         } as i16
             + change)
             .rem_euclid(self.get_active_tag().len() as i16);
-        self.tags[self.active_tag].focus =
-            Some(self.get_active_tag()[focus_index as usize].window);
-        Ok(())
+        self.tags[self.active_tag].focus = Some(self.get_active_tag()[focus_index as usize].window);
     }
 
     fn handle_enter<C: Connection>(
@@ -285,15 +314,11 @@ impl ManagerState {
     }
 
     fn map_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_tag()
-            .iter()
-            .try_for_each(|w| conn.map(w))
+        self.get_active_tag().iter().try_for_each(|w| conn.map(w))
     }
 
     fn unmap_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_tag()
-            .iter()
-            .try_for_each(|w| conn.unmap(w))
+        self.get_active_tag().iter().try_for_each(|w| conn.unmap(w))
     }
 
     fn config_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
