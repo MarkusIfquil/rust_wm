@@ -1,6 +1,6 @@
-use std::num::ParseIntError;
-use serde::Deserialize;
 use crate::keys::HotkeyAction;
+use serde::Deserialize;
+use std::num::ParseIntError;
 
 pub const SPACING: u32 = 10;
 pub const RATIO: f32 = 0.5;
@@ -110,26 +110,37 @@ impl ConfigDeserialized {
     fn default() -> Self {
         println!("USING DEFAULT CONFIG");
         let mut hotkeys = vec![
+            // terminal
             HotkeyConfig {
                 modifiers: "CONTROL|MOD".to_string(),
                 key: "Return".to_string(),
                 action: HotkeyAction::Spawn("alacritty".to_string()),
             },
+            // browser
+            HotkeyConfig {
+                modifiers: "CONTROL|MOD".to_string(),
+                key: "l".to_string(),
+                action: HotkeyAction::Spawn("librewolf".to_string()),
+            },
+            // quit window
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "q".to_string(),
                 action: HotkeyAction::ExitFocusedWindow,
             },
+            // shutdown
             HotkeyConfig {
                 modifiers: "CONTROL|MOD".to_string(),
                 key: "q".to_string(),
                 action: HotkeyAction::Spawn("killall rust_wm".to_string()),
             },
+            // app starter
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "c".to_string(),
                 action: HotkeyAction::Spawn("rofi -show drun".to_string()),
             },
+            // screenshot
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "u".to_string(),
@@ -137,6 +148,7 @@ impl ConfigDeserialized {
                     "maim --select | xclip -selection clipboard -t image/png".to_string(),
                 ),
             },
+            // change ratio
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "h".to_string(),
@@ -147,6 +159,7 @@ impl ConfigDeserialized {
                 key: "j".to_string(),
                 action: HotkeyAction::ChangeRatio(0.1),
             },
+            // change focus
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "k".to_string(),
@@ -157,6 +170,7 @@ impl ConfigDeserialized {
                 key: "l".to_string(),
                 action: HotkeyAction::NextFocus(-1),
             },
+            // change tag
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "XK_Left".to_string(),
@@ -169,12 +183,14 @@ impl ConfigDeserialized {
             },
         ];
         hotkeys.extend(
+            // switch to tag
             (1..=9)
                 .map(|x| HotkeyConfig {
                     modifiers: "MOD".to_string(),
                     key: x.to_string(),
                     action: HotkeyAction::SwitchTag(x),
                 })
+                // move window to tag
                 .chain((1..=9).map(|x| HotkeyConfig {
                     modifiers: "MOD|SHIFT".to_string(),
                     key: x.to_string(),

@@ -98,22 +98,12 @@ impl ManagerState {
         })
     }
 
-    pub fn get_active_window_group(&self) -> &Vec<WindowState> {
-        &self
-            .tags
-            .iter()
-            .find(|x| x.tag == self.active_tag)
-            .expect("active window group not found")
-            .windows
+    pub fn get_active_tag(&self) -> &Vec<WindowState> {
+        &self.tags[self.active_tag].windows
     }
 
-    pub fn get_mut_active_window_group(&mut self) -> &mut Vec<WindowState> {
-        &mut self
-            .tags
-            .iter_mut()
-            .find(|x| x.tag == self.active_tag)
-            .expect("active window group not found")
-            .windows
+    pub fn get_mut_active_tag(&mut self) -> &mut Vec<WindowState> {
+        &mut self.tags[self.active_tag].windows
     }
 
     pub fn get_window_state(&self, window: Window) -> Option<&WindowState> {
@@ -167,7 +157,7 @@ impl ManagerState {
         //side effect
         conn.destroy_window(window)?;
 
-        self.get_mut_active_window_group()
+        self.get_mut_active_tag()
             .retain(|w| w.window != event.window);
         self.set_tag_focus_to_master();
         self.refresh(conn)
@@ -199,17 +189,6 @@ impl ManagerState {
         conn: &ConnectionHandler<C>,
         event: KeyPressEvent,
     ) -> Res {
-        println!(
-            "keypress code {} mod {:?} sym {:?}",
-            event.detail,
-            event.state,
-            conn.key_handler
-                .sym_code
-                .iter()
-                .find(|(_, c)| **c == event.detail.into())
-                .unwrap()
-                .0
-        );
         let action = match conn.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
@@ -259,7 +238,7 @@ impl ManagerState {
             None => return Ok(()),
         };
         let focus_index = (match self
-            .get_active_window_group()
+            .get_active_tag()
             .iter()
             .position(|w| w.window == focus_window)
         {
@@ -267,9 +246,9 @@ impl ManagerState {
             None => return Ok(()),
         } as i16
             + change)
-            .rem_euclid(self.get_active_window_group().len() as i16);
+            .rem_euclid(self.get_active_tag().len() as i16);
         self.tags[self.active_tag].focus =
-            Some(self.get_active_window_group()[focus_index as usize].window);
+            Some(self.get_active_tag()[focus_index as usize].window);
         Ok(())
     }
 
@@ -306,19 +285,19 @@ impl ManagerState {
     }
 
     fn map_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_window_group()
+        self.get_active_tag()
             .iter()
             .try_for_each(|w| conn.map(w))
     }
 
     fn unmap_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_window_group()
+        self.get_active_tag()
             .iter()
             .try_for_each(|w| conn.unmap(w))
     }
 
     fn config_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_window_group()
+        self.get_active_tag()
             .iter()
             .try_for_each(|w| conn.config_window_from_state(w))
     }
@@ -372,11 +351,11 @@ impl ManagerState {
     }
 
     fn set_last_master_others_stack(&mut self) -> Res {
-        self.get_mut_active_window_group()
+        self.get_mut_active_tag()
             .iter_mut()
             .for_each(|w| w.group = WindowGroup::Stack);
 
-        if let Some(w) = self.get_mut_active_window_group().last_mut() {
+        if let Some(w) = self.get_mut_active_tag().last_mut() {
             w.group = WindowGroup::Master;
         };
         Ok(())
@@ -385,26 +364,26 @@ impl ManagerState {
     fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         println!("tiling tag {}", self.active_tag);
 
-        let bar_height = conn.font_ascent * 3 / 2;
+        let bar_height = self.bar.height;
         let (gap, ratio) = (self.tiling.gap, self.tiling.ratio);
         let (maxw, maxh) = (conn.screen.width_in_pixels, conn.screen.height_in_pixels);
 
-        let stack_count = self.get_active_window_group().len().clamp(1, 100) - 1;
+        let stack_count = self.get_active_tag().len().clamp(1, 100) - 1;
 
-        self.get_mut_active_window_group()
+        self.get_mut_active_tag()
             .iter_mut()
             .enumerate()
             .try_for_each(|(i, w)| -> Res {
                 match w.group {
                     WindowGroup::Master => {
                         w.x = 0 + gap as i16;
-                        w.y = 0 + gap as i16 + bar_height;
+                        w.y = 0 + gap as i16 + bar_height as i16;
                         w.width = if stack_count == 0 {
                             maxw - gap as u16 * 2
                         } else {
                             ((maxw as f32 * (1.0 - ratio)) - (gap as f32 * 2.0)) as u16
                         };
-                        w.height = maxh - gap as u16 * 2 - bar_height as u16;
+                        w.height = maxh - gap as u16 * 2 - bar_height;
                         Ok(())
                     }
                     WindowGroup::Stack => {
@@ -418,9 +397,7 @@ impl ManagerState {
                         w.width = (maxw as f32 * ratio) as u16 - gap as u16;
 
                         w.height = if i == 0 {
-                            (maxh as usize / stack_count) as u16
-                                - gap as u16 * 2
-                                - bar_height as u16
+                            (maxh as usize / stack_count) as u16 - gap as u16 * 2 - bar_height
                         } else {
                             (maxh as usize / stack_count) as u16 - gap as u16
                         };
@@ -435,10 +412,11 @@ impl ManagerState {
     fn refresh_focus<C: Connection>(&self, conn: &ConnectionHandler<C>) -> Res {
         match self.tags[self.active_tag].focus {
             Some(w) => {
-                conn.set_focus_window(
-                    self.get_active_window_group(),
-                    self.get_window_state(w).unwrap(),
-                )?;
+                let window = match self.get_window_state(w) {
+                    Some(w) => w,
+                    None => return Ok(()),
+                };
+                conn.set_focus_window(self.get_active_tag(), window)?;
             }
             None => {
                 conn.set_focus_to_root()?;

@@ -434,7 +434,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .clear_area(
                 false,
                 w.window,
-                w.width as i16 - (status_text.len()+5) as i16 * self.font_width,
+                w.width as i16 - (status_text.len() + 5) as i16 * self.font_width,
                 w.y,
                 w.width,
                 w.height,
@@ -506,9 +506,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 }
 
 pub fn spawn_command(command: &str) {
-    Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .spawn()
-        .expect("cant spawn process");
+    match Command::new("sh").arg("-c").arg(command).spawn() {
+        Ok(_) => (),
+        Err(e) => println!("error when spawning command {e:?}"),
+    };
 }

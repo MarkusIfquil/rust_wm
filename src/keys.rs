@@ -30,7 +30,7 @@ pub struct Hotkey {
 }
 
 pub struct KeyHandler {
-    pub sym_code: HashMap<Keysym, KeyCode>,
+    pub _sym_code: HashMap<Keysym, KeyCode>,
     pub hotkeys: Vec<Hotkey>,
 }
 
@@ -88,7 +88,16 @@ impl KeyHandler {
                     "XF86_AudioMute" => Keysym::XF86_AudioMute,
                     "XK_Left" => Keysym::Left,
                     "XK_Right" => Keysym::Right,
-                    c => Keysym::from_char(c.chars().next().unwrap_or_default()),
+                    c => {
+                        let ch = match c.chars().next() {
+                            Some(c) => c,
+                            None => {
+                                println!("BAD KEYSYM");
+                                char::default()
+                            }
+                        };
+                        Keysym::from_char(ch)
+                    }
                 };
 
                 Hotkey {
@@ -101,7 +110,10 @@ impl KeyHandler {
             })
             .collect();
 
-        Ok(KeyHandler { sym_code, hotkeys })
+        Ok(KeyHandler {
+            _sym_code: sym_code,
+            hotkeys,
+        })
     }
 
     fn get_registered_hotkey(&self, mask: KeyButMask, code_raw: u32) -> Option<&Hotkey> {
