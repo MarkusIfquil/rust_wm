@@ -157,6 +157,16 @@ impl ConfigDeserialized {
                 key: "l".to_string(),
                 action: HotkeyAction::NextFocus(-1),
             },
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "XK_Left".to_string(),
+                action: HotkeyAction::NextTag(-1),
+            },
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "XK_Right".to_string(),
+                action: HotkeyAction::NextTag(1),
+            },
         ];
         hotkeys.extend(
             (1..=9)

@@ -199,6 +199,17 @@ impl ManagerState {
         conn: &ConnectionHandler<C>,
         event: KeyPressEvent,
     ) -> Res {
+        println!(
+            "keypress code {} mod {:?} sym {:?}",
+            event.detail,
+            event.state,
+            conn.key_handler
+                .sym_code
+                .iter()
+                .find(|(_, c)| **c == event.detail.into())
+                .unwrap()
+                .0
+        );
         let action = match conn.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
@@ -211,11 +222,9 @@ impl ManagerState {
         match action {
             HotkeyAction::SwitchTag(n) => {
                 self.change_active_tag(conn, n - 1)?;
-                self.refresh(conn)?;
             }
             HotkeyAction::MoveWindow(n) => {
                 self.move_window(conn, n - 1)?;
-                self.refresh(conn)?;
             }
             HotkeyAction::Spawn(command) => {
                 crate::actions::spawn_command(&command);
@@ -229,13 +238,18 @@ impl ManagerState {
             }
             HotkeyAction::ChangeRatio(change) => {
                 self.tiling.ratio = (self.tiling.ratio + change).clamp(0.1, 0.9);
-                self.refresh(conn)?;
             }
             HotkeyAction::NextFocus(change) => {
                 self.switch_focus_next(change)?;
-                self.refresh(conn)?;
+            }
+            HotkeyAction::NextTag(change) => {
+                self.change_active_tag(
+                    conn,
+                    (self.active_tag as i16 + change).rem_euclid(9) as usize,
+                )?;
             }
         };
+        self.refresh(conn)?;
         Ok(())
     }
 
@@ -252,7 +266,8 @@ impl ManagerState {
             Some(i) => i,
             None => return Ok(()),
         } as i16
-            + change).rem_euclid(self.get_active_window_group().len() as i16);
+            + change)
+            .rem_euclid(self.get_active_window_group().len() as i16);
         self.tags[self.active_tag].focus =
             Some(self.get_active_window_group()[focus_index as usize].window);
         Ok(())

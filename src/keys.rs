@@ -17,6 +17,7 @@ pub enum HotkeyAction {
     MoveWindow(usize),
     ChangeRatio(f32),
     NextFocus(i16),
+    NextTag(i16),
 }
 
 #[derive(Debug)]
@@ -29,6 +30,7 @@ pub struct Hotkey {
 }
 
 pub struct KeyHandler {
+    pub sym_code: HashMap<Keysym, KeyCode>,
     pub hotkeys: Vec<Hotkey>,
 }
 
@@ -84,6 +86,8 @@ impl KeyHandler {
                     "XF86_AudioRaiseVolume" => Keysym::XF86_AudioRaiseVolume,
                     "XF86_AudioLowerVolume" => Keysym::XF86_AudioLowerVolume,
                     "XF86_AudioMute" => Keysym::XF86_AudioMute,
+                    "XK_Left" => Keysym::Left,
+                    "XK_Right" => Keysym::Right,
                     c => Keysym::from_char(c.chars().next().unwrap_or_default()),
                 };
 
@@ -97,7 +101,7 @@ impl KeyHandler {
             })
             .collect();
 
-        Ok(KeyHandler { hotkeys })
+        Ok(KeyHandler { sym_code, hotkeys })
     }
 
     fn get_registered_hotkey(&self, mask: KeyButMask, code_raw: u32) -> Option<&Hotkey> {
