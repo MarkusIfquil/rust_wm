@@ -318,13 +318,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    fn clear_window(&self, w: &WindowState) -> Res {
-        Ok(self
-            .connection
-            .clear_area(false, w.window, w.x, w.y, w.width, w.height)?
-            .check()?)
-    }
-
     fn create_tag_rectangle(&self, h: u16, x: usize) -> Rectangle {
         Rectangle {
             x: h as i16 * (x as i16 - 1),
@@ -340,7 +333,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             None => "".to_owned(),
         };
 
-        self.clear_window(&wm_state.bar)?;
+        self.connection.clear_area(false, wm_state.bar.window, wm_state.bar.x, wm_state.bar.y, wm_state.bar.width/2, wm_state.bar.height)?;
 
         let h = self.font_ascent as u16 * 3 / 2;
 
@@ -419,12 +412,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection.image_text8(
             wm_state.bar.window,
             self.id_graphics_context,
-            h as i16 * 10,
+            h as i16 * 9 + h as i16 /2,
             text_y,
             bar_text.as_bytes(),
         )?;
 
-        self.draw_status_bar(&wm_state.bar)?;
         Ok(())
     }
 
