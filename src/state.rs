@@ -249,7 +249,7 @@ impl ManagerState {
         };
         let len = self.tags[self.active_tag].windows.len();
         let mut master = self.tags[self.active_tag].windows[len - 1].window;
-        if master == focus_window {
+        if master == focus_window && len > 1 {
             master = self.tags[self.active_tag].windows[len - 2].window;
         }
         let index_f = match self.get_index_of_window(focus_window) {
