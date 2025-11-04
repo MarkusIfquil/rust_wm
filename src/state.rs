@@ -119,11 +119,23 @@ impl ManagerState {
         event: Event,
     ) -> Res {
         match event {
-            Event::UnmapNotify(e) => self.handle_unmap_notify(conn, e)?,
             Event::MapRequest(e) => self.handle_map_request(conn, e)?,
-            Event::KeyPress(e) => self.handle_keypress(conn, e)?,
-            Event::EnterNotify(e) => self.handle_enter(e),
-            _ => {}
+            Event::UnmapNotify(e) => {
+                self.handle_unmap_notify(conn, e)?;
+            }
+            Event::KeyPress(e) => {
+                self.handle_keypress(conn, e)?;
+            }
+            Event::EnterNotify(e) => {
+                self.handle_enter(conn, e)?;
+            }
+            Event::ConfigureRequest(e) => {
+                match self.get_window_state(e.window) {
+                    Some(_) => conn.handle_config(e)?,
+                    None => (),
+                };
+            }
+            _ => (),
         };
         Ok(())
     }
@@ -133,10 +145,17 @@ impl ManagerState {
         conn: &ConnectionHandler<C>,
         event: UnmapNotifyEvent,
     ) -> Res {
+        let window = match self.get_window_state(event.window) {
+            Some(w) => w,
+            None => return Ok(()),
+        };
         println!(
             "EVENT UNMAP window {} event {} from config {} response {}",
             event.window, event.event, event.from_configure, event.response_type
         );
+
+        //side effect
+        conn.destroy_window(window)?;
 
         self.get_mut_active_window_group()
             .retain(|w| w.window != event.window);
@@ -149,19 +168,20 @@ impl ManagerState {
         conn: &ConnectionHandler<C>,
         event: MapRequestEvent,
     ) -> Res {
+        if let Some(_) = self.get_window_state(event.window) {
+            return Ok(());
+        };
+
         println!(
             "EVENT MAP window {} parent {} response {}",
             event.window, event.parent, event.response_type
         );
 
-        match self.get_window_state(event.window) {
-            None => {
-                println!("state map: {}", event.window);
-                self.manage_new_window(conn, event.window)?;
-                self.refresh(conn)
-            }
-            Some(_) => Ok(()),
-        }
+        let window = WindowState::new(event.window, conn.connection.generate_id()?)?;
+
+        conn.create_frame_of_window(&window)?;
+        self.add_window(window);
+        self.refresh(conn)
     }
 
     fn handle_keypress<C: Connection>(
@@ -169,12 +189,11 @@ impl ManagerState {
         conn: &ConnectionHandler<C>,
         event: KeyPressEvent,
     ) -> Res {
-        println!("EVENT KEYPRESS code {} sym {:?}", event.detail, event.state);
-
         let action = match conn.key_handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
         };
+        println!("EVENT KEYPRESS code {} sym {:?} action {:?}", event.detail, event.state, action);
 
         match action {
             HotkeyAction::SwitchTag(n) => {
@@ -185,33 +204,37 @@ impl ManagerState {
                 self.move_window(conn, n as usize - 1)?;
                 self.refresh(conn)?;
             }
-            _ => {}
+            HotkeyAction::Spawn(command) => {
+                crate::actions::spawn_command(&command);
+            }
+            HotkeyAction::ExitFocusedWindow => {
+                let focus = match self.tags[self.active_tag].focus {
+                    Some(f) => f,
+                    None => return Ok(()),
+                };
+                conn.kill_focus(focus)?;
+            }
         };
         Ok(())
     }
 
-    fn handle_enter(&mut self, event: EnterNotifyEvent) {
+    fn handle_enter<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        event: EnterNotifyEvent,
+    ) -> Res {
         println!(
             "EVENT ENTER child {} detail {:?} event {}",
             event.child, event.detail, event.event
         );
-        self.tags[self.active_tag].focus = match self.get_window_state(event.child) {
-            Some(w) => Some(w.window),
-            None if self.tags[self.active_tag].windows.is_empty() => None,
-            None => self.tags[self.active_tag].focus,
+
+        if let Some(w) = self.get_window_state(event.child) {
+            self.tags[self.active_tag].focus = Some(w.window);
         };
-    }
-
-    fn manage_new_window<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        window: Window,
-    ) -> Res {
-        println!("managing new window {window}");
-        let window = WindowState::new(window, conn.connection.generate_id()?)?;
-
-        conn.create_frame_of_window(&window)?;
-        self.add_window(window);
+        if let Some(w) = self.get_window_state(event.event) {
+            self.tags[self.active_tag].focus = Some(w.window);
+        };
+        self.refresh(conn)?;
         Ok(())
     }
 
@@ -242,7 +265,7 @@ impl ManagerState {
     fn config_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         self.get_active_window_group()
             .iter()
-            .try_for_each(|w| conn.config_window(w))
+            .try_for_each(|w| conn.config_window_from_state(w))
     }
 
     fn move_window<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
@@ -306,7 +329,7 @@ impl ManagerState {
 
     fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         println!("tiling tag {}", self.active_tag);
-        let conf = conn.config.clone();
+        let conf = &conn.config;
         let (maxw, maxh) = (conn.screen.width_in_pixels, conn.screen.height_in_pixels);
         let stack_count = self.get_active_window_group().len().clamp(1, 100) - 1;
 
@@ -317,21 +340,21 @@ impl ManagerState {
                 match w.group {
                     WindowGroup::Master => {
                         w.x = 0 + conf.spacing as i16;
-                        w.y = 0 + conf.spacing as i16 + conf.bar_height as i16;
+                        w.y = 0 + conf.spacing as i16 + conn.font_ascent * 3 / 2;
                         w.width = if stack_count == 0 {
                             maxw - (conf.spacing * 2) as u16
                         } else {
                             ((maxw as f32 * (1.0 - conf.ratio)) - ((conf.spacing * 2) as f32))
                                 as u16
                         };
-                        w.height = maxh - (conf.spacing * 2) as u16 - conf.bar_height as u16;
+                        w.height = maxh - (conf.spacing * 2) as u16 - conn.font_ascent as u16 * 3 / 2;
                         Ok(())
                     }
                     WindowGroup::Stack => {
                         w.x = (maxw as f32 * (1.0 - conf.ratio)) as i16;
                         w.y = if i == 0 {
                             (i * (maxh as usize / stack_count) + conf.spacing as usize) as i16
-                                + conf.bar_height as i16
+                                + conn.font_ascent * 3 / 2 as i16
                         } else {
                             (i * (maxh as usize / stack_count)) as i16
                         };
@@ -340,7 +363,7 @@ impl ManagerState {
                         w.height = if i == 0 {
                             (maxh as usize / stack_count) as u16
                                 - (conf.spacing * 2) as u16
-                                - conf.bar_height as u16
+                                - conn.font_ascent as u16 * 3 / 2
                         } else {
                             (maxh as usize / stack_count) as u16 - (conf.spacing) as u16
                         };
@@ -355,7 +378,10 @@ impl ManagerState {
     fn refresh_focus<C: Connection>(&self, conn: &ConnectionHandler<C>) -> Res {
         match self.tags[self.active_tag].focus {
             Some(w) => {
-                conn.set_focus_window(self, self.get_window_state(w).unwrap())?;
+                conn.set_focus_window(
+                    self.get_active_window_group(),
+                    self.get_window_state(w).unwrap(),
+                )?;
             }
             None => {
                 conn.set_focus_to_root()?;

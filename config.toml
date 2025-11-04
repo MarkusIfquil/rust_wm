@@ -35,6 +35,12 @@ modifiers = "MOD"
 key = "c"
 action = { Spawn = "rofi -show drun" }
 
+# screenshot
+[[hotkeys]]
+modifiers = "MOD"
+key = "u"
+action = { Spawn = "maim --select | xclip -selection clipboard -t image/png" }
+
 # tag switch
 [[hotkeys]]
 modifiers = "MOD"

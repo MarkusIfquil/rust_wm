@@ -64,7 +64,7 @@ impl KeyHandler {
             .cloned()
             .map(|c| {
                 let modi = c
-                    .modifier
+                    .modifiers
                     .split("|")
                     .map(|m| match m {
                         "CONTROL" => KeyButMask::CONTROL,

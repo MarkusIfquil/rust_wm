@@ -7,13 +7,13 @@ use x11rb::{
     connection::Connection,
     cursor,
     errors::{ReplyError, ReplyOrIdError},
-    protocol::{ErrorKind, Event, xproto::*},
+    protocol::{ErrorKind, xproto::*},
     resource_manager,
 };
 
 use crate::{
     config::{self, Config, ConfigDeserialized},
-    keys::{HotkeyAction, KeyHandler},
+    keys::KeyHandler,
     state::*,
 };
 
@@ -30,7 +30,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
     pub font_ascent: i16,
     font_width: i16,
     atoms: HashMap<String, u32>,
-    pub config: Config
+    pub config: Config,
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
@@ -126,7 +126,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 ("WM_PROTOCOLS".to_string(), wm_protocols),
                 ("WM_DELETE_WINDOW".to_string(), wm_delete_window),
             ]),
-            config
+            config,
         })
     }
 
@@ -147,65 +147,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn handle_event(&self, wm_state: &ManagerState, event: Event) -> Res {
-        match event {
-            Event::UnmapNotify(e) => self.handle_unmap(wm_state, e),
-            Event::ConfigureRequest(e) => self.handle_config(wm_state, e),
-            Event::EnterNotify(e) => self.handle_enter(wm_state, e),
-            Event::KeyPress(e) => self.handle_keypress(wm_state, e),
-            _ => Ok(()),
-        }
-    }
-
-    fn handle_unmap(&self, wm_state: &ManagerState, event: UnmapNotifyEvent) -> Res {
-        match wm_state.get_window_state(event.window) {
-            Some(w) => self.destroy_window(w),
-            None => Ok(()),
-        }
-    }
-
-    fn handle_config(&self, wm_state: &ManagerState, event: ConfigureRequestEvent) -> Res {
+    pub fn handle_config(&self, event: ConfigureRequestEvent) -> Res {
         println!(
             "EVENT CONFIG w {} x {} y {} w {} h {}",
             event.window, event.x, event.y, event.width, event.height
         );
-        match wm_state.get_window_state(event.window) {
-            Some(_) => self.config_from_event(event),
-            None => Ok(()),
-        }
-    }
-
-    fn handle_enter(&self, wm_state: &ManagerState, event: EnterNotifyEvent) -> Res {
-        println!("got enter wid {} fid {}", event.child, event.event);
-        if let Some(w) = wm_state.get_window_state(event.child) {
-            return self.set_focus_window(wm_state, w);
-        };
-        if let Some(w) = wm_state.get_window_state(event.event) {
-            return self.set_focus_window(wm_state, w);
-        };
-        Ok(())
-    }
-
-    fn handle_keypress(&self, wm_state: &ManagerState, event: KeyPressEvent) -> Res {
-        println!(
-            "handling keypress with code {} and modifier {:?}",
-            event.detail, event.state
-        );
-
-        let action = match self.key_handler.get_action(event) {
-            Some(a) => a,
-            None => return Ok(()),
-        };
-
-        match action {
-            HotkeyAction::Spawn(command) => {
-                spawn_command(&command);
-            }
-            HotkeyAction::ExitFocusedWindow => {
-                self.kill_focus(wm_state)?;
-            }
-            _ => {}
-        };
+        let aux = ConfigureWindowAux::from_configure_request(&event);
+        self.connection.configure_window(event.window, &aux)?;
         Ok(())
     }
 
@@ -249,26 +197,23 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn set_focus_window(&self, wm_state: &ManagerState, window: &WindowState) -> Res {
+    pub fn set_focus_window(&self, windows: &Vec<WindowState>, window: &WindowState) -> Res {
         println!("setting focus to: {:?}", window.window);
         self.connection
             .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
 
         //set borders
-        wm_state
-            .get_active_window_group()
-            .iter()
-            .try_for_each(|w| {
-                self.connection.configure_window(
-                    w.frame_window,
-                    &ConfigureWindowAux::new().border_width(self.config.border_size as u32),
-                )?;
-                self.connection.change_window_attributes(
-                    w.frame_window,
-                    &ChangeWindowAttributesAux::new().border_pixel(self.graphics.0),
-                )?;
-                Ok::<(), ReplyOrIdError>(())
-            })?;
+        windows.iter().try_for_each(|w| {
+            self.connection.configure_window(
+                w.frame_window,
+                &ConfigureWindowAux::new().border_width(self.config.border_size as u32),
+            )?;
+            self.connection.change_window_attributes(
+                w.frame_window,
+                &ChangeWindowAttributesAux::new().border_pixel(self.graphics.0),
+            )?;
+            Ok::<(), ReplyOrIdError>(())
+        })?;
 
         self.connection.change_window_attributes(
             window.frame_window,
@@ -281,7 +226,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(self.connection.get_input_focus()?.reply()?.focus)
     }
 
-    pub fn config_window(&self, window: &WindowState) -> Res {
+    pub fn config_window_from_state(&self, window: &WindowState) -> Res {
         println!("configuring window {} from state", window.window);
         self.connection
             .configure_window(
@@ -338,12 +283,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    fn kill_focus(&self, wm_state: &ManagerState) -> Res {
-        let focus = match wm_state.tags[wm_state.active_tag].focus {
-            Some(f) => f,
-            None => return Ok(()),
-        };
-
+    pub fn kill_focus(&self, focus: u32) -> Res {
         println!("killing focus window {focus}");
         self.connection.send_event(
             false,
@@ -356,13 +296,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 [self.atoms["WM_DELETE_WINDOW"], 0, 0, 0, 0],
             ),
         )?;
-        Ok(())
-    }
-
-    fn config_from_event(&self, event: ConfigureRequestEvent) -> Res {
-        println!("configuring window: {}", event.window);
-        let aux = ConfigureWindowAux::from_configure_request(&event);
-        self.connection.configure_window(event.window, &aux)?;
         Ok(())
     }
 
@@ -409,7 +342,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
         self.clear_window(&wm_state.bar)?;
 
-        let h = wm_state.bar.height;
+        let h = self.font_ascent as u16 * 3 / 2;
 
         //draw regular tag rect
         self.connection.poly_fill_rectangle(
@@ -501,7 +434,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .clear_area(
                 false,
                 w.window,
-                w.width as i16 - status_text.len() as i16 * self.font_width,
+                w.width as i16 - (status_text.len()+5) as i16 * self.font_width,
                 w.y,
                 w.width,
                 w.height,
@@ -572,10 +505,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 }
 
-fn spawn_command(command: &str) {
-    let parts = command.split(" ").map(|s| s.to_owned()).collect::<Vec<_>>();
-    Command::new(parts[0].clone())
-        .args(parts[1..].iter())
+pub fn spawn_command(command: &str) {
+    Command::new("sh")
+        .arg("-c")
+        .arg(command)
         .spawn()
         .expect("cant spawn process");
 }

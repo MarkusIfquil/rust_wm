@@ -72,7 +72,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut event_as_option = Some(event);
 
         while let Some(event) = event_as_option {
-            handler.handle_event(&wm_state, event.clone()).print();
             wm_state.handle_event(&handler, event.clone()).print();
             event_as_option = connection.poll_for_event()?;
         }
