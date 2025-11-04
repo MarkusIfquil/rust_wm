@@ -13,9 +13,12 @@ use crate::config::Config;
 pub enum HotkeyAction {
     Spawn(String),
     ExitFocusedWindow,
-    SwitchTag(u16),
-    MoveWindow(u16),
+    SwitchTag(usize),
+    MoveWindow(usize),
+    ChangeRatio(f32),
+    NextFocus(i16),
 }
+
 #[derive(Debug)]
 pub struct Hotkey {
     _sym: Keysym,

@@ -63,10 +63,16 @@ impl Tag {
     }
 }
 
+struct TilingPreferences {
+    gap: u32,
+    ratio: f32,
+}
+
 pub struct ManagerState {
     pub tags: Vec<Tag>,
     pub active_tag: usize,
     pub bar: WindowState,
+    tiling: TilingPreferences,
 }
 
 type Res = Result<(), ReplyOrIdError>;
@@ -85,6 +91,10 @@ impl ManagerState {
                 group: WindowGroup::None,
             },
             active_tag: 0,
+            tiling: TilingPreferences {
+                gap: handler.config.spacing,
+                ratio: handler.config.ratio,
+            },
         })
     }
 
@@ -193,15 +203,18 @@ impl ManagerState {
             Some(a) => a,
             None => return Ok(()),
         };
-        println!("EVENT KEYPRESS code {} sym {:?} action {:?}", event.detail, event.state, action);
+        println!(
+            "EVENT KEYPRESS code {} sym {:?} action {:?}",
+            event.detail, event.state, action
+        );
 
         match action {
             HotkeyAction::SwitchTag(n) => {
-                self.change_active_tag(conn, n as usize - 1)?;
+                self.change_active_tag(conn, n - 1)?;
                 self.refresh(conn)?;
             }
             HotkeyAction::MoveWindow(n) => {
-                self.move_window(conn, n as usize - 1)?;
+                self.move_window(conn, n - 1)?;
                 self.refresh(conn)?;
             }
             HotkeyAction::Spawn(command) => {
@@ -214,7 +227,34 @@ impl ManagerState {
                 };
                 conn.kill_focus(focus)?;
             }
+            HotkeyAction::ChangeRatio(change) => {
+                self.tiling.ratio = (self.tiling.ratio + change).clamp(0.1, 0.9);
+                self.refresh(conn)?;
+            }
+            HotkeyAction::NextFocus(change) => {
+                self.switch_focus_next(change)?;
+                self.refresh(conn)?;
+            }
         };
+        Ok(())
+    }
+
+    fn switch_focus_next(&mut self, change: i16) -> Res {
+        let focus_window = match self.tags[self.active_tag].focus {
+            Some(w) => w,
+            None => return Ok(()),
+        };
+        let focus_index = (match self
+            .get_active_window_group()
+            .iter()
+            .position(|w| w.window == focus_window)
+        {
+            Some(i) => i,
+            None => return Ok(()),
+        } as i16
+            + change).rem_euclid(self.get_active_window_group().len() as i16);
+        self.tags[self.active_tag].focus =
+            Some(self.get_active_window_group()[focus_index as usize].window);
         Ok(())
     }
 
@@ -329,8 +369,11 @@ impl ManagerState {
 
     fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         println!("tiling tag {}", self.active_tag);
-        let conf = &conn.config;
+
+        let bar_height = conn.font_ascent * 3 / 2;
+        let (gap, ratio) = (self.tiling.gap, self.tiling.ratio);
         let (maxw, maxh) = (conn.screen.width_in_pixels, conn.screen.height_in_pixels);
+
         let stack_count = self.get_active_window_group().len().clamp(1, 100) - 1;
 
         self.get_mut_active_window_group()
@@ -339,33 +382,32 @@ impl ManagerState {
             .try_for_each(|(i, w)| -> Res {
                 match w.group {
                     WindowGroup::Master => {
-                        w.x = 0 + conf.spacing as i16;
-                        w.y = 0 + conf.spacing as i16 + conn.font_ascent * 3 / 2;
+                        w.x = 0 + gap as i16;
+                        w.y = 0 + gap as i16 + bar_height;
                         w.width = if stack_count == 0 {
-                            maxw - (conf.spacing * 2) as u16
+                            maxw - gap as u16 * 2
                         } else {
-                            ((maxw as f32 * (1.0 - conf.ratio)) - ((conf.spacing * 2) as f32))
-                                as u16
+                            ((maxw as f32 * (1.0 - ratio)) - (gap as f32 * 2.0)) as u16
                         };
-                        w.height = maxh - (conf.spacing * 2) as u16 - conn.font_ascent as u16 * 3 / 2;
+                        w.height = maxh - gap as u16 * 2 - bar_height as u16;
                         Ok(())
                     }
                     WindowGroup::Stack => {
-                        w.x = (maxw as f32 * (1.0 - conf.ratio)) as i16;
+                        w.x = (maxw as f32 * (1.0 - ratio)) as i16;
                         w.y = if i == 0 {
-                            (i * (maxh as usize / stack_count) + conf.spacing as usize) as i16
-                                + conn.font_ascent * 3 / 2 as i16
+                            (i * (maxh as usize / stack_count) + gap as usize) as i16
+                                + bar_height as i16
                         } else {
                             (i * (maxh as usize / stack_count)) as i16
                         };
-                        w.width = (maxw as f32 * conf.ratio) as u16 - (conf.spacing) as u16;
+                        w.width = (maxw as f32 * ratio) as u16 - gap as u16;
 
                         w.height = if i == 0 {
                             (maxh as usize / stack_count) as u16
-                                - (conf.spacing * 2) as u16
-                                - conn.font_ascent as u16 * 3 / 2
+                                - gap as u16 * 2
+                                - bar_height as u16
                         } else {
-                            (maxh as usize / stack_count) as u16 - (conf.spacing) as u16
+                            (maxh as usize / stack_count) as u16 - gap as u16
                         };
                         Ok(())
                     }

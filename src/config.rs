@@ -136,7 +136,27 @@ impl ConfigDeserialized {
                 action: HotkeyAction::Spawn(
                     "maim --select | xclip -selection clipboard -t image/png".to_string(),
                 ),
-            }, // tag switch
+            },
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "h".to_string(),
+                action: HotkeyAction::ChangeRatio(-0.1),
+            },
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "j".to_string(),
+                action: HotkeyAction::ChangeRatio(0.1),
+            },
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "k".to_string(),
+                action: HotkeyAction::NextFocus(1),
+            },
+            HotkeyConfig {
+                modifiers: "MOD".to_string(),
+                key: "l".to_string(),
+                action: HotkeyAction::NextFocus(-1),
+            },
         ];
         hotkeys.extend(
             (1..=9)
