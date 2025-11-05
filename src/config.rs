@@ -215,6 +215,33 @@ impl ConfigDeserialized {
                 key: "XK_Return".to_string(),
                 action: HotkeyAction::SwapMaster,
             },
+            //media
+            HotkeyConfig {
+                modifiers: "".to_string(),
+                key: "XF86_AudioRaiseVolume".to_string(),
+                action: HotkeyAction::Spawn("/usr/bin/pactl set-sink-volume 0 +5%".to_string())
+            },
+            HotkeyConfig {
+                modifiers: "".to_string(),
+                key: "XF86_AudioLowerVolume".to_string(),
+                action: HotkeyAction::Spawn("/usr/bin/pactl set-sink-volume 0 -5%".to_string())
+            },
+            HotkeyConfig {
+                modifiers: "".to_string(),
+                key: "XF86_AudioMute".to_string(),
+                action: HotkeyAction::Spawn("/usr/bin/pactl set-sink-mute 0 toggle".to_string())
+            },
+            HotkeyConfig {
+                modifiers: "".to_string(),
+                key: "XF86_MonBrightnessUp".to_string(),
+                action: HotkeyAction::Spawn("sudo light -A 5".to_string())
+            },
+            HotkeyConfig {
+                modifiers: "".to_string(),
+                key: "XF86_MonBrightnessDown".to_string(),
+                action: HotkeyAction::Spawn("sudo light -U 5".to_string())
+            },
+
         ];
         hotkeys.extend(
             // switch to tag
