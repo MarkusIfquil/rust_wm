@@ -1,4 +1,4 @@
-<div align="center"><h1>hematite: a simple, fast, opinionated tiling window manager.</h1></div>
+<div align="center"><h1>hematite: a simple, fast, opinionated X tiling window manager.</h1></div>
 
 # why hematite?
 hematite is designed to be as simple as possible while still having the functions of a modern tiling manager.
@@ -24,6 +24,14 @@ sudo cargo install --path . --root /usr
 ```sh
 exec hematite &
 ```
+
+# dependencies
+
+hematite is made to contain as few implementation dependencies (that you need to install yourself) as possible, but there are a few mandatory ones:
+
+- xorg (runtime, build): libx11, xrandr, xorg-server, libxinerama
+- sh (runtime): any posix-compliant shell for starting up and down commands
+- rust (build): >= 1.74.0
 
 # next steps
 ## status bar
