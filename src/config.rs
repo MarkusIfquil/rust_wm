@@ -92,7 +92,14 @@ pub struct HotkeyConfig {
 
 impl ConfigDeserialized {
     pub fn new() -> Self {
-        let config_str = match std::fs::read_to_string("/home/Markus/.config/rwm/config.toml") {
+        let path = match xdg::BaseDirectories::with_prefix("rwm").place_config_file("config.toml") {
+            Ok(p) => p,
+            Err(e) => {
+                println!("cant create config file with error {e:?}");
+                return Self::default();
+            }
+        };
+        let config_str = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
                 println!("CONFIG FILE ERROR {e:?}");
@@ -152,12 +159,12 @@ impl ConfigDeserialized {
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "h".to_string(),
-                action: HotkeyAction::ChangeRatio(-0.1),
+                action: HotkeyAction::ChangeRatio(-0.05),
             },
             HotkeyConfig {
                 modifiers: "MOD".to_string(),
                 key: "j".to_string(),
-                action: HotkeyAction::ChangeRatio(0.1),
+                action: HotkeyAction::ChangeRatio(0.05),
             },
             // change focus
             HotkeyConfig {

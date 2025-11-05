@@ -223,7 +223,7 @@ impl ManagerState {
                 conn.kill_focus(focus)?;
             }
             HotkeyAction::ChangeRatio(change) => {
-                self.tiling.ratio = (self.tiling.ratio + change).clamp(0.1, 0.9);
+                self.tiling.ratio = (self.tiling.ratio + change).clamp(0.15, 0.85);
             }
             HotkeyAction::NextFocus(change) => {
                 self.switch_focus_next(change);
