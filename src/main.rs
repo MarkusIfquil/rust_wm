@@ -19,16 +19,17 @@ impl ErrorPrinter for Result<(), ReplyOrIdError> {
             Err(e) => e,
         };
 
-        println!("got error: {:?}", error);
+        log::error!("got error: {:?}", error);
         match error {
-            ReplyOrIdError::X11Error(e) => println!("x11 error {:?}", e),
-            ReplyOrIdError::IdsExhausted => println!("ids exhausted"),
-            ReplyOrIdError::ConnectionError(e) => println!("connection error {:?}", e),
+            ReplyOrIdError::X11Error(e) => log::error!("x11 error {:?}", e),
+            ReplyOrIdError::IdsExhausted => log::error!("ids exhausted"),
+            ReplyOrIdError::ConnectionError(e) => log::error!("connection error {:?}", e),
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let (connection, screen_num) = x11rb::connect(None)?;
     let handler = ConnectionHandler::new(&connection, screen_num)?;
     handler.become_window_manager().print();

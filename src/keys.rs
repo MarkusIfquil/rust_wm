@@ -93,7 +93,7 @@ impl KeyHandler {
                         let ch = match c.chars().next() {
                             Some(c) => c,
                             None => {
-                                println!("BAD KEYSYM");
+                                log::error!("BAD KEYSYM {c}");
                                 char::default()
                             }
                         };

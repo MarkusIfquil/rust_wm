@@ -33,14 +33,14 @@ impl From<ConfigDeserialized> for Config {
         let main_color = match hex_color_to_rgb(&config.colors.main_color) {
             Ok(c) => c,
             Err(_) => {
-                println!("BAD COLOR VALUE");
+                log::debug!("BAD COLOR VALUE");
                 MAIN_COLOR
             }
         };
         let secondary_color = match hex_color_to_rgb(&config.colors.secondary_color) {
             Ok(c) => c,
             Err(_) => {
-                println!("BAD COLOR VALUE");
+                log::debug!("BAD COLOR VALUE");
                 SECONDARY_COLOR
             }
         };
@@ -95,27 +95,28 @@ impl ConfigDeserialized {
         let path = match xdg::BaseDirectories::with_prefix("rwm").place_config_file("config.toml") {
             Ok(p) => p,
             Err(e) => {
-                println!("cant create config file with error {e:?}");
+                log::error!("cant create config file with error {e:?}, using default");
                 return Self::default();
             }
         };
+        log::info!("loading config from {path:?}");
         let config_str = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
-                println!("CONFIG FILE ERROR {e:?}");
+                log::error!("config file error {e:?}, using default");
                 return Self::default();
             }
         };
         match toml::from_str(&config_str) {
             Ok(d) => d,
             Err(e) => {
-                println!("ERROR PARSING CONFIG {e:?}");
+                log::error!("error parsing config {e:?}, using default");
                 Self::default()
             }
         }
     }
     fn default() -> Self {
-        println!("USING DEFAULT CONFIG");
+        log::error!("using default config");
         let mut hotkeys = vec![
             // terminal
             HotkeyConfig {

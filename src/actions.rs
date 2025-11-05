@@ -87,10 +87,10 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .check()
         {
             Ok(_) => {
-                println!("setting font to {}", config.font);
+                log::info!("setting font to {}", config.font);
             }
             Err(_) => {
-                println!("BAD FONT, USING DEFAULT");
+                log::error!("BAD FONT, USING DEFAULT");
                 connection
                     .open_font(id_font, config::FONT.as_bytes())?
                     .check()?
@@ -106,9 +106,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
         //get font parameters
         let f = connection.query_font(id_font)?.reply()?.max_bounds;
-        println!(
+        log::debug!(
             "got font parameters ascent {} descent {} width {}",
-            f.ascent, f.descent, f.character_width
+            f.ascent,
+            f.descent,
+            f.character_width
         );
         connection.close_font(id_font)?;
 
@@ -148,9 +150,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn handle_config(&self, event: ConfigureRequestEvent) -> Res {
-        println!(
+        log::debug!(
             "EVENT CONFIG w {} x {} y {} w {} h {}",
-            event.window, event.x, event.y, event.width, event.height
+            event.window,
+            event.x,
+            event.y,
+            event.width,
+            event.height
         );
         let aux = ConfigureWindowAux::from_configure_request(&event);
         self.connection.configure_window(event.window, &aux)?;
@@ -188,7 +194,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn destroy_window(&self, window: &WindowState) -> Res {
-        println!("destroying window: {}", window.window);
+        log::debug!("destroying window: {}", window.window);
         self.connection
             .change_save_set(SetMode::DELETE, window.window)?;
         self.connection
@@ -198,7 +204,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn set_focus_window(&self, windows: &Vec<WindowState>, window: &WindowState) -> Res {
-        println!("setting focus to: {:?}", window.window);
+        log::debug!("setting focus to: {:?}", window.window);
         self.connection
             .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
 
@@ -227,7 +233,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn config_window_from_state(&self, window: &WindowState) -> Res {
-        println!("configuring window {} from state", window.window);
+        log::debug!("configuring window {} from state", window.window);
         self.connection
             .configure_window(
                 window.frame_window,
@@ -266,7 +272,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn create_bar_window(&self, window: Window) -> Res {
-        println!("creating bar: {}", window);
+        log::debug!("creating bar: {}", window);
         self.connection.create_window(
             COPY_DEPTH_FROM_PARENT,
             window,
@@ -284,7 +290,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn kill_focus(&self, focus: u32) -> Res {
-        println!("killing focus window {focus}");
+        log::debug!("killing focus window {focus}");
         self.connection.send_event(
             false,
             focus,
@@ -333,7 +339,14 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             None => "".to_owned(),
         };
 
-        self.connection.clear_area(false, wm_state.bar.window, wm_state.bar.x, wm_state.bar.y, wm_state.bar.width/2, wm_state.bar.height)?;
+        self.connection.clear_area(
+            false,
+            wm_state.bar.window,
+            wm_state.bar.x,
+            wm_state.bar.y,
+            wm_state.bar.width / 2,
+            wm_state.bar.height,
+        )?;
 
         let h = self.font_ascent as u16 * 3 / 2;
 
@@ -412,7 +425,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection.image_text8(
             wm_state.bar.window,
             self.id_graphics_context,
-            h as i16 * 9 + h as i16 /2,
+            h as i16 * 9 + h as i16 / 2,
             text_y,
             bar_text.as_bytes(),
         )?;
@@ -456,12 +469,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.set_focus_to_root()?;
         if let Err(ReplyError::X11Error(ref error)) = result {
             if error.error_kind == ErrorKind::Access {
-                println!("another wm is running");
+                log::error!("another wm is running");
                 exit(1);
             } else {
             }
         } else {
-            println!("became wm");
+            log::info!("became window manager successfully");
         }
         Ok(())
     }
@@ -500,6 +513,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 pub fn spawn_command(command: &str) {
     match Command::new("sh").arg("-c").arg(command).spawn() {
         Ok(_) => (),
-        Err(e) => println!("error when spawning command {e:?}"),
+        Err(e) => log::error!("error when spawning command {e:?}"),
     };
 }

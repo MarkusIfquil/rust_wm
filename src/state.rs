@@ -41,9 +41,15 @@ impl WindowState {
         })
     }
     pub fn print(&self) {
-        println!(
+        log::debug!(
             "id {} fid {} x {} y {} w {} h {} g {:?}",
-            self.window, self.frame_window, self.x, self.y, self.width, self.height, self.group
+            self.window,
+            self.frame_window,
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            self.group
         );
     }
 }
@@ -156,9 +162,12 @@ impl ManagerState {
             Some(w) => w,
             None => return Ok(()),
         };
-        println!(
+        log::debug!(
             "EVENT UNMAP window {} event {} from config {} response {}",
-            event.window, event.event, event.from_configure, event.response_type
+            event.window,
+            event.event,
+            event.from_configure,
+            event.response_type
         );
 
         //side effect
@@ -179,9 +188,11 @@ impl ManagerState {
             return Ok(());
         };
 
-        println!(
+        log::debug!(
             "EVENT MAP window {} parent {} response {}",
-            event.window, event.parent, event.response_type
+            event.window,
+            event.parent,
+            event.response_type
         );
 
         let window = WindowState::new(event.window, conn.connection.generate_id()?)?;
@@ -200,7 +211,7 @@ impl ManagerState {
             Some(a) => a,
             None => return Ok(()),
         };
-        println!(
+        log::debug!(
             "EVENT KEYPRESS code {} sym {:?} action {:?}",
             event.detail, event.state, action
         );
@@ -286,7 +297,7 @@ impl ManagerState {
         conn: &ConnectionHandler<C>,
         event: EnterNotifyEvent,
     ) -> Res {
-        println!(
+        log::debug!(
             "EVENT ENTER child {} detail {:?} event {}",
             event.child, event.detail, event.event
         );
@@ -303,10 +314,10 @@ impl ManagerState {
 
     fn change_active_tag<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
         if self.active_tag == tag {
-            println!("tried switching to already active tag");
+            log::error!("tried switching to already active tag");
             return Ok(());
         }
-        println!("changing tag to {tag}");
+        log::debug!("changing tag to {tag}");
         self.unmap_all(conn)?;
         self.active_tag = tag;
         self.map_all(conn)?;
@@ -329,10 +340,10 @@ impl ManagerState {
 
     fn move_window<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
         if self.active_tag == tag {
-            println!("tried moving window to already active tag");
+            log::error!("tried moving window to already active tag");
             return Ok(());
         }
-        println!("moving window to tag {tag}");
+        log::debug!("moving window to tag {tag}");
 
         let focus_window = conn.get_focus()?;
 
@@ -352,13 +363,13 @@ impl ManagerState {
     }
 
     fn add_window(&mut self, window: WindowState) {
-        println!("adding window to tag {}", self.active_tag);
+        log::debug!("adding window to tag {}", self.active_tag);
         self.tags[self.active_tag].windows.push(window);
         self.tags[self.active_tag].focus = Some(window.window);
     }
 
     fn set_tag_focus_to_master(&mut self) {
-        println!("setting tag focus to master");
+        log::debug!("setting tag focus to master");
         self.tags[self.active_tag].focus = match self.tags[self.active_tag].windows.last() {
             Some(w) => Some(w.window),
             None => None,
@@ -387,7 +398,7 @@ impl ManagerState {
     }
 
     fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        println!("tiling tag {}", self.active_tag);
+        log::debug!("tiling tag {}", self.active_tag);
 
         let bar_height = self.bar.height;
         let (gap, ratio) = (self.tiling.gap, self.tiling.ratio);
@@ -451,7 +462,7 @@ impl ManagerState {
     }
 
     fn print_state(&self) {
-        println!(
+        log::debug!(
             "Manager state: active tag {} focus {:?}",
             self.active_tag, self.tags[self.active_tag].focus
         );
@@ -459,7 +470,7 @@ impl ManagerState {
             .iter()
             .filter(|t| !t.windows.is_empty())
             .for_each(|t| {
-                println!("tag {} windows:", t.tag);
+                log::debug!("tag {} windows:", t.tag);
                 t.windows.iter().for_each(|w| w.print());
             });
     }
