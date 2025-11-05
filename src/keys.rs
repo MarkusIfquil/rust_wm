@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use x11rb::{
     connection::Connection,
     errors::ReplyOrIdError,
@@ -9,7 +9,7 @@ use x11rb::{
 use xkeysym::{KeyCode, Keysym};
 
 use crate::config::Config;
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HotkeyAction {
     Spawn(String),
     ExitFocusedWindow,

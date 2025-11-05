@@ -1,5 +1,5 @@
 use crate::keys::HotkeyAction;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::num::ParseIntError;
 
 pub const SPACING: u32 = 10;
@@ -57,7 +57,7 @@ impl From<ConfigDeserialized> for Config {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigDeserialized {
     sizing: Sizing,
     colors: Colors,
@@ -65,25 +65,25 @@ pub struct ConfigDeserialized {
     hotkeys: Vec<HotkeyConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Sizing {
     spacing: u32,
     ratio: f32,
     border_size: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Colors {
     main_color: String,
     secondary_color: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Font {
     font: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyConfig {
     pub modifiers: String,
     pub key: String,
@@ -92,21 +92,41 @@ pub struct HotkeyConfig {
 
 impl ConfigDeserialized {
     pub fn new() -> Self {
-        let path = match xdg::BaseDirectories::with_prefix("rwm").place_config_file("config.toml") {
-            Ok(p) => p,
-            Err(e) => {
-                log::error!("cant create config file with error {e:?}, using default");
-                return Self::default();
-            }
-        };
+        let path =
+            match xdg::BaseDirectories::with_prefix("hematite").place_config_file("config.toml") {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error!("cant create config file with error {e:?}, using default");
+                    return Self::default();
+                }
+            };
+
         log::info!("loading config from {path:?}");
-        let config_str = match std::fs::read_to_string(path) {
+
+        let config_str = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
-                log::error!("config file error {e:?}, using default");
+                log::info!("config not found {e:?}, serializing default");
+
+                let serialized = match toml::to_string(&Self::default()) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        log::error!("couldn't serialize config into file, using default");
+                        return Self::default();
+                    }
+                };
+
+                match std::fs::write(&path, serialized) {
+                    Ok(_) => log::info!("created default config at {path:?}"),
+                    Err(_) => {
+                        log::error!("couldn't write to file, using default");
+                    }
+                }
+
                 return Self::default();
             }
         };
+        
         match toml::from_str(&config_str) {
             Ok(d) => d,
             Err(e) => {
@@ -116,7 +136,7 @@ impl ConfigDeserialized {
         }
     }
     fn default() -> Self {
-        log::error!("using default config");
+        log::info!("using default config");
         let mut hotkeys = vec![
             // terminal
             HotkeyConfig {
