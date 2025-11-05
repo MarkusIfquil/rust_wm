@@ -160,7 +160,7 @@ impl ConfigDeserialized {
             HotkeyConfig {
                 modifiers: "CONTROL|MOD".to_string(),
                 key: "q".to_string(),
-                action: HotkeyAction::Spawn("killall rust_wm".to_string()),
+                action: HotkeyAction::Spawn("killall hematite".to_string()),
             },
             // app starter
             HotkeyConfig {
