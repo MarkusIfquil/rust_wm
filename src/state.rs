@@ -14,7 +14,7 @@ type Window = u32;
 enum WindowGroup {
     Master,
     Stack,
-    None,
+    Floating,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -37,7 +37,7 @@ impl WindowState {
             y: 0,
             width: 100,
             height: 100,
-            group: WindowGroup::None,
+            group: WindowGroup::Floating,
         })
     }
     pub fn print(&self) {
@@ -94,7 +94,7 @@ impl ManagerState {
                 y: 0,
                 width: handler.screen.width_in_pixels,
                 height: handler.font_ascent as u16 * 3 / 2,
-                group: WindowGroup::None,
+                group: WindowGroup::Floating,
             },
             active_tag: 0,
             tiling: TilingPreferences {
@@ -119,6 +119,13 @@ impl ManagerState {
             .find(|w| w.window == window || w.frame_window == window)
     }
 
+    pub fn get_mut_window_state(&mut self, window: Window) -> Option<&mut WindowState> {
+        self.tags[self.active_tag]
+            .windows
+            .iter_mut()
+            .find(|w| w.window == window || w.frame_window == window)
+    }
+
     fn get_index_of_window(&self, window: Window) -> Option<usize> {
         self.tags[self.active_tag]
             .windows
@@ -132,24 +139,176 @@ impl ManagerState {
         event: Event,
     ) -> Res {
         match event {
-            Event::MapRequest(e) => self.handle_map_request(conn, e)?,
+            Event::MapRequest(e) => {
+                log::trace!("map request: window {}", e.window);
+                self.handle_map_request(conn, e)?
+            }
+            Event::CreateNotify(e) => {
+                log::trace!(
+                    "create notify: window {} parent {} x {} y {} w {} h {}",
+                    e.window,
+                    e.parent,
+                    e.x,
+                    e.y,
+                    e.width,
+                    e.height
+                );
+            }
+            Event::DestroyNotify(e) => {
+                log::trace!("destroy notify: window {}", e.window);
+            }
+            Event::MapNotify(e) => {
+                log::trace!("map notify: window {}", e.window);
+            }
+            Event::PropertyNotify(e) => {
+                log::trace!(
+                    "property notify: window {} atom {:?} state {:?}",
+                    e.window,
+                    String::from_utf8(conn.connection.get_atom_name(e.atom)?.reply()?.name),
+                    e.state
+                );
+            }
             Event::UnmapNotify(e) => {
+                log::trace!("unmap request: window {}", e.window);
                 self.handle_unmap_notify(conn, e)?;
             }
             Event::KeyPress(e) => {
                 self.handle_keypress(conn, e)?;
             }
             Event::EnterNotify(e) => {
+                log::trace!("enter request: child {} event {}", e.child, e.event);
                 self.handle_enter(conn, e)?;
             }
             Event::ConfigureRequest(e) => {
+                log::trace!(
+                    "config request: window {} x {} y {} w {} h {}",
+                    e.window,
+                    e.x,
+                    e.y,
+                    e.width,
+                    e.height
+                );
                 match self.get_window_state(e.window) {
                     Some(_) => conn.handle_config(e)?,
                     None => (),
                 };
             }
+            Event::ConfigureNotify(e) => {
+                log::trace!(
+                    "config notify: window {} event {} x {} y {} w {} h {}",
+                    e.window,
+                    e.event,
+                    e.x,
+                    e.y,
+                    e.width,
+                    e.height
+                );
+            }
+            Event::ClientMessage(e) => {
+                log::trace!("client message: window {}", e.window);
+                self.handle_client_message(conn, e)?;
+            }
             _ => (),
         };
+        Ok(())
+    }
+
+    fn handle_client_message<C: Connection>(
+        &mut self,
+        conn: &ConnectionHandler<C>,
+        event: ClientMessageEvent,
+    ) -> Res {
+        let data = event.data.as_data32();
+
+        log::debug!("got client data {data:?}");
+
+        let event_type =
+            match String::from_utf8(conn.connection.get_atom_name(event.type_)?.reply()?.name) {
+                Ok(s) => s,
+                Err(_) => return Ok(()),
+            };
+
+        let first_property =
+            match String::from_utf8(conn.connection.get_atom_name(data[1])?.reply()?.name) {
+                Ok(s) => s,
+                Err(_) => return Ok(()),
+            };
+
+        log::info!(
+            "GOT CLIENT EVENT window {} atom {:?} first prop {:?}",
+            event.window,
+            event_type,
+            first_property
+        );
+
+        match event_type.as_str() {
+            "_NET_WM_STATE" => match first_property.as_str() {
+                "_NET_WM_STATE_FULLSCREEN" => {
+                    let state = match self.get_mut_window_state(event.window) {
+                        Some(s) => s,
+                        None => return Ok(()),
+                    };
+                    let window = state.window;
+                    let state_cloned = state.clone();
+                    match data[0] {
+                        0 => {
+                            state.group = WindowGroup::Stack;
+                            self.remove_fullscreen(conn, window)?;
+                            self.refresh(conn)?;
+                        }
+                        1 => {
+                            state.group = WindowGroup::Floating;
+                            self.set_fullscreen(conn, state_cloned)?;
+                        }
+                        2 => {}
+                        _ => {}
+                    };
+                }
+                _ => {}
+            },
+            _ => {}
+        };
+
+        Ok(())
+    }
+
+    fn remove_fullscreen<C: Connection>(
+        &self,
+        conn: &ConnectionHandler<C>,
+        window: Window,
+    ) -> Res {
+        conn.connection.change_property(
+            PropMode::REPLACE,
+            window,
+            conn.atoms["_NET_WM_STATE"],
+            AtomEnum::ATOM,
+            32,
+            1,
+            &[0,0,0,0],
+        )?;
+        Ok(())
+    }
+
+    fn set_fullscreen<C: Connection>(
+        &self,
+        conn: &ConnectionHandler<C>,
+        mut window: WindowState,
+    ) -> Res {
+        window.group = WindowGroup::Floating;
+        window.x = 0;
+        window.y = 0;
+        window.width = conn.screen.width_in_pixels;
+        window.height = conn.screen.height_in_pixels;
+        conn.config_window_from_state(&window)?;
+        conn.connection.change_property(
+            PropMode::REPLACE,
+            window.window,
+            conn.atoms["_NET_WM_STATE"],
+            AtomEnum::ATOM,
+            32,
+            1,
+            &conn.atoms["_NET_WM_STATE_FULLSCREEN"].to_ne_bytes(),
+        )?;
         Ok(())
     }
 
@@ -213,7 +372,9 @@ impl ManagerState {
         };
         log::debug!(
             "EVENT KEYPRESS code {} sym {:?} action {:?}",
-            event.detail, event.state, action
+            event.detail,
+            event.state,
+            action
         );
 
         match action {
@@ -299,7 +460,9 @@ impl ManagerState {
     ) -> Res {
         log::debug!(
             "EVENT ENTER child {} detail {:?} event {}",
-            event.child, event.detail, event.event
+            event.child,
+            event.detail,
+            event.event
         );
 
         if let Some(w) = self.get_window_state(event.child) {
@@ -389,6 +552,7 @@ impl ManagerState {
     fn set_last_master_others_stack(&mut self) -> Res {
         self.get_mut_active_tag()
             .iter_mut()
+            .filter(|w| w.group != WindowGroup::Floating)
             .for_each(|w| w.group = WindowGroup::Stack);
 
         if let Some(w) = self.get_mut_active_tag().last_mut() {
@@ -464,7 +628,8 @@ impl ManagerState {
     fn print_state(&self) {
         log::debug!(
             "Manager state: active tag {} focus {:?}",
-            self.active_tag, self.tags[self.active_tag].focus
+            self.active_tag,
+            self.tags[self.active_tag].focus
         );
         self.tags
             .iter()

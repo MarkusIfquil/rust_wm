@@ -29,7 +29,9 @@ impl ErrorPrinter for Result<(), ReplyOrIdError> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    env_logger::Builder::from_default_env()
+        .target(env_logger::Target::Stdout)
+        .init();
     let (connection, screen_num) = x11rb::connect(None)?;
     let handler = ConnectionHandler::new(&connection, screen_num)?;
     handler.become_window_manager().print();
