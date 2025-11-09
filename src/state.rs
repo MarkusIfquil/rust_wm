@@ -140,69 +140,22 @@ impl ManagerState {
     ) -> Res {
         match event {
             Event::MapRequest(e) => {
-                log::trace!("map request: window {}", e.window);
-                self.handle_map_request(conn, e)?
-            }
-            Event::CreateNotify(e) => {
-                log::trace!(
-                    "create notify: window {} parent {} x {} y {} w {} h {}",
-                    e.window,
-                    e.parent,
-                    e.x,
-                    e.y,
-                    e.width,
-                    e.height
-                );
-            }
-            Event::DestroyNotify(e) => {
-                log::trace!("destroy notify: window {}", e.window);
-            }
-            Event::MapNotify(e) => {
-                log::trace!("map notify: window {}", e.window);
-            }
-            Event::PropertyNotify(e) => {
-                log::trace!(
-                    "property notify: window {} atom {:?} state {:?}",
-                    e.window,
-                    String::from_utf8(conn.connection.get_atom_name(e.atom)?.reply()?.name),
-                    e.state
-                );
+                self.handle_map_request(conn, e)?;
             }
             Event::UnmapNotify(e) => {
-                log::trace!("unmap request: window {}", e.window);
                 self.handle_unmap_notify(conn, e)?;
             }
             Event::KeyPress(e) => {
                 self.handle_keypress(conn, e)?;
             }
             Event::EnterNotify(e) => {
-                log::trace!("enter request: child {} event {}", e.child, e.event);
                 self.handle_enter(conn, e)?;
             }
             Event::ConfigureRequest(e) => {
-                log::trace!(
-                    "config request: window {} x {} y {} w {} h {}",
-                    e.window,
-                    e.x,
-                    e.y,
-                    e.width,
-                    e.height
-                );
                 match self.get_window_state(e.window) {
                     Some(_) => conn.handle_config(e)?,
                     None => (),
                 };
-            }
-            Event::ConfigureNotify(e) => {
-                log::trace!(
-                    "config notify: window {} event {} x {} y {} w {} h {}",
-                    e.window,
-                    e.event,
-                    e.x,
-                    e.y,
-                    e.width,
-                    e.height
-                );
             }
             Event::ClientMessage(e) => {
                 log::trace!("client message: window {}", e.window);
@@ -220,8 +173,6 @@ impl ManagerState {
     ) -> Res {
         let data = event.data.as_data32();
 
-        log::debug!("got client data {data:?}");
-
         let event_type =
             match String::from_utf8(conn.connection.get_atom_name(event.type_)?.reply()?.name) {
                 Ok(s) => s,
@@ -234,7 +185,8 @@ impl ManagerState {
                 Err(_) => return Ok(()),
             };
 
-        log::info!(
+        log::debug!("got client data {data:?}");
+        log::debug!(
             "GOT CLIENT EVENT window {} atom {:?} first prop {:?}",
             event.window,
             event_type,
@@ -253,12 +205,12 @@ impl ManagerState {
                     match data[0] {
                         0 => {
                             state.group = WindowGroup::Stack;
-                            self.remove_fullscreen(conn, window)?;
+                            conn.remove_prop(window,"_NET_WM_STATE")?;
                             self.refresh(conn)?;
                         }
                         1 => {
                             state.group = WindowGroup::Floating;
-                            self.set_fullscreen(conn, state_cloned)?;
+                            conn.set_fullscreen(state_cloned)?;
                         }
                         2 => {}
                         _ => {}
@@ -269,46 +221,6 @@ impl ManagerState {
             _ => {}
         };
 
-        Ok(())
-    }
-
-    fn remove_fullscreen<C: Connection>(
-        &self,
-        conn: &ConnectionHandler<C>,
-        window: Window,
-    ) -> Res {
-        conn.connection.change_property(
-            PropMode::REPLACE,
-            window,
-            conn.atoms["_NET_WM_STATE"],
-            AtomEnum::ATOM,
-            32,
-            1,
-            &[0,0,0,0],
-        )?;
-        Ok(())
-    }
-
-    fn set_fullscreen<C: Connection>(
-        &self,
-        conn: &ConnectionHandler<C>,
-        mut window: WindowState,
-    ) -> Res {
-        window.group = WindowGroup::Floating;
-        window.x = 0;
-        window.y = 0;
-        window.width = conn.screen.width_in_pixels;
-        window.height = conn.screen.height_in_pixels;
-        conn.config_window_from_state(&window)?;
-        conn.connection.change_property(
-            PropMode::REPLACE,
-            window.window,
-            conn.atoms["_NET_WM_STATE"],
-            AtomEnum::ATOM,
-            32,
-            1,
-            &conn.atoms["_NET_WM_STATE_FULLSCREEN"].to_ne_bytes(),
-        )?;
         Ok(())
     }
 

@@ -38,7 +38,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     pub fn new(connection: &'a C, screen_num: usize) -> Result<Self, ReplyOrIdError> {
         let config = Config::from(ConfigDeserialized::new());
         let screen = &connection.setup().roots[screen_num];
-        log::debug!("screen num {screen_num} root {}",screen.root);
+        log::debug!("screen num {screen_num} root {}", screen.root);
         let id_graphics_context = connection.generate_id()?;
         let id_inverted_graphics_context = connection.generate_id()?;
         let id_font = connection.generate_id()?;
@@ -159,7 +159,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             "hematite".as_bytes(),
         )?;
 
-
         let main_color = connection
             .alloc_color(
                 screen.default_colormap,
@@ -239,7 +238,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         })
     }
 
-    pub fn change_prop(&self, window: Window, atom_name: &str, data: &[u32]) -> Res {
+    pub fn change_prop(&self, window: Window, atom_name: &str, data: &[u8]) -> Res {
         Ok(self
             .connection
             .change_property(
@@ -248,10 +247,23 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 self.atoms[atom_name],
                 AtomEnum::ATOM,
                 32,
-                data.len() as u32,
-                unsafe { data.align_to::<u8>().1 },
+                data.len() as u32 / 4,
+                data,
             )?
             .check()?)
+    }
+
+    pub fn remove_prop(&self, window: Window, atom_name: &str) -> Res {
+        self.connection.change_property(
+            PropMode::REPLACE,
+            window,
+            self.atoms[atom_name],
+            AtomEnum::ATOM,
+            32,
+            1,
+            &[0, 0, 0, 0],
+        )?;
+        Ok(())
     }
 
     pub fn map(&self, window: &WindowState) -> Res {
@@ -309,12 +321,16 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 .border_pixel(self.graphics.1),
         )?;
 
-        self.connection.change_window_attributes(window.window, &ChangeWindowAttributesAux::new().event_mask(
-            EventMask::KEY_PRESS
-                        | EventMask::SUBSTRUCTURE_NOTIFY
-                        | EventMask::ENTER_WINDOW
-                        | EventMask::PROPERTY_CHANGE | EventMask::RESIZE_REDIRECT
-        ))?;
+        self.connection.change_window_attributes(
+            window.window,
+            &ChangeWindowAttributesAux::new().event_mask(
+                EventMask::KEY_PRESS
+                    | EventMask::SUBSTRUCTURE_NOTIFY
+                    | EventMask::ENTER_WINDOW
+                    | EventMask::PROPERTY_CHANGE
+                    | EventMask::RESIZE_REDIRECT,
+            ),
+        )?;
 
         let allowed_actions = [
             "_NET_WM_ACTION_MOVE",
@@ -332,7 +348,9 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         ]
         .map(|a| self.atoms[a]);
 
-        self.change_prop(window.window, "_NET_WM_ALLOWED_ACTIONS", &allowed_actions)?;
+        self.change_prop(window.window, "_NET_WM_ALLOWED_ACTIONS", &unsafe {
+            allowed_actions.align_to::<u8>().1
+        })?;
 
         self.connection.grab_server()?;
         self.connection
@@ -414,7 +432,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 },
             )?
             .check()?;
-        
+
         Ok(())
     }
 
@@ -662,6 +680,23 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         self.connection.change_window_attributes(
             self.screen.root,
             &ChangeWindowAttributesAux::new().cursor(cursor),
+        )?;
+        Ok(())
+    }
+
+    pub fn set_fullscreen(
+        &self,
+        mut window: WindowState,
+    ) -> Res {
+        window.x = 0;
+        window.y = 0;
+        window.width = self.screen.width_in_pixels;
+        window.height = self.screen.height_in_pixels;
+        self.config_window_from_state(&window)?;
+        self.change_prop(
+            window.window,
+            "_NET_WM_STATE",
+            &self.atoms["_NET_WM_STATE_FULLSCREEN"].to_ne_bytes(),
         )?;
         Ok(())
     }
