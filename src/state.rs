@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use crate::actions::*;
 use crate::keys::HotkeyAction;
+use crate::keys::KeyHandler;
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyOrIdError;
@@ -11,7 +12,7 @@ use x11rb::protocol::xproto::*;
 type Window = u32;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum WindowGroup {
+pub enum WindowGroup {
     Master,
     Stack,
     Floating,
@@ -25,7 +26,7 @@ pub struct WindowState {
     pub y: i16,
     pub width: u16,
     pub height: u16,
-    group: WindowGroup,
+    pub(crate) group: WindowGroup,
 }
 
 impl WindowState {
@@ -77,7 +78,6 @@ struct TilingPreferences {
 pub struct ManagerState {
     pub tags: Vec<Tag>,
     pub active_tag: usize,
-    pub bar: WindowState,
     tiling: TilingPreferences,
 }
 
@@ -87,15 +87,6 @@ impl ManagerState {
     pub fn new<C: Connection>(handler: &ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
         Ok(ManagerState {
             tags: (0..=8).map(|n| Tag::new(n)).collect(),
-            bar: WindowState {
-                window: handler.connection.generate_id()?,
-                frame_window: handler.connection.generate_id()?,
-                x: 0,
-                y: 0,
-                width: handler.screen.width_in_pixels,
-                height: handler.font_ascent as u16 * 3 / 2,
-                group: WindowGroup::Floating,
-            },
             active_tag: 0,
             tiling: TilingPreferences {
                 gap: handler.config.spacing,
@@ -136,6 +127,7 @@ impl ManagerState {
     pub fn handle_event<C: Connection>(
         &mut self,
         conn: &ConnectionHandler<C>,
+        key_handler: &KeyHandler,
         event: Event,
     ) -> Res {
         match event {
@@ -146,7 +138,7 @@ impl ManagerState {
                 self.handle_unmap_notify(conn, e)?;
             }
             Event::KeyPress(e) => {
-                self.handle_keypress(conn, e)?;
+                self.handle_keypress(conn, key_handler,e)?;
             }
             Event::EnterNotify(e) => {
                 self.handle_enter(conn, e)?;
@@ -174,13 +166,16 @@ impl ManagerState {
         let data = event.data.as_data32();
 
         let event_type =
-            match String::from_utf8(conn.connection.get_atom_name(event.type_)?.reply()?.name) {
+            match String::from_utf8(conn.conn.get_atom_name(event.type_)?.reply()?.name) {
                 Ok(s) => s,
                 Err(_) => return Ok(()),
             };
 
+        if data[1]==0 {
+            return Ok(());
+        }
         let first_property =
-            match String::from_utf8(conn.connection.get_atom_name(data[1])?.reply()?.name) {
+            match String::from_utf8(conn.conn.get_atom_name(data[1])?.reply()?.name) {
                 Ok(s) => s,
                 Err(_) => return Ok(()),
             };
@@ -205,7 +200,7 @@ impl ManagerState {
                     match data[0] {
                         0 => {
                             state.group = WindowGroup::Stack;
-                            conn.remove_prop(window,"_NET_WM_STATE")?;
+                            conn.remove_atom_prop(window,"_NET_WM_STATE")?;
                             self.refresh(conn)?;
                         }
                         1 => {
@@ -266,7 +261,7 @@ impl ManagerState {
             event.response_type
         );
 
-        let window = WindowState::new(event.window, conn.connection.generate_id()?)?;
+        let window = WindowState::new(event.window, conn.conn.generate_id()?)?;
 
         conn.create_frame_of_window(&window)?;
         self.add_window(window);
@@ -276,9 +271,10 @@ impl ManagerState {
     fn handle_keypress<C: Connection>(
         &mut self,
         conn: &ConnectionHandler<C>,
+        handler: &KeyHandler,
         event: KeyPressEvent,
     ) -> Res {
-        let action = match conn.key_handler.get_action(event) {
+        let action = match handler.get_action(event) {
             Some(a) => a,
             None => return Ok(()),
         };
@@ -476,7 +472,7 @@ impl ManagerState {
     fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
         log::debug!("tiling tag {}", self.active_tag);
 
-        let bar_height = self.bar.height;
+        let bar_height = conn.bar.height;
         let (gap, ratio) = (self.tiling.gap, self.tiling.ratio);
         let (maxw, maxh) = (conn.screen.width_in_pixels, conn.screen.height_in_pixels);
 

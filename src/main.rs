@@ -4,8 +4,13 @@ mod actions;
 mod config;
 mod keys;
 mod state;
-use crate::{actions::ConnectionHandler, state::*};
-use std::{thread, time::Duration};
+use crate::{
+    actions::ConnectionHandler,
+    config::{Config, ConfigDeserialized},
+    keys::KeyHandler,
+    state::*,
+};
+use std::{sync::mpsc, thread, time::Duration};
 use x11rb::{connection::Connection, errors::ReplyOrIdError};
 
 trait ErrorPrinter {
@@ -32,51 +37,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_default_env()
         .target(env_logger::Target::Stdout)
         .init();
-    let (connection, screen_num) = x11rb::connect(None)?;
-    let handler = ConnectionHandler::new(&connection, screen_num)?;
-    handler.become_window_manager().print();
-    handler.grab_keys()?;
-    handler.set_cursor()?;
 
+    let (conn, screen_num) = x11rb::connect(None)?;
+    let config = Config::from(ConfigDeserialized::new());
+    let handler = ConnectionHandler::new(&conn, screen_num, &config)?;
+    let key_handler = KeyHandler::new(&conn, &config)?;
     let mut wm_state = ManagerState::new(&handler)?;
-
-    handler.create_bar_window(wm_state.bar.window).print();
-    handler.create_frame_of_window(&wm_state.bar).print();
     handler.draw_bar(&wm_state, None)?;
-
-    let bar_window = wm_state.bar.clone();
+    
+    let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || -> Result<(), ReplyOrIdError> {
-        let (conn, s) = match x11rb::connect(None) {
-            Ok((c, s)) => (c, s),
-            Err(_) => {
-                return Err(ReplyOrIdError::ConnectionError(
-                    x11rb::errors::ConnectionError::UnknownError,
-                ));
-            }
-        };
-
-        let other_handler = match ConnectionHandler::new(&conn, s) {
-            Ok(h) => h,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-
         loop {
-            other_handler.draw_status_bar(&bar_window)?;
+            let _ = tx.send(1);
             thread::sleep(Duration::from_secs(1));
         }
     });
 
     loop {
-        connection.flush()?;
-        let event = connection.wait_for_event()?;
+        if let Ok(_) = rx.try_recv() {
+            handler.draw_status_bar()?;
+        }
+        conn.flush()?;
+        let event = conn.wait_for_event()?;
         let mut event_as_option = Some(event);
 
         while let Some(event) = event_as_option {
-            wm_state.handle_event(&handler, event.clone()).print();
-            event_as_option = connection.poll_for_event()?;
+            wm_state.handle_event(&handler, &key_handler, event).print();
+            event_as_option = conn.poll_for_event()?;
         }
     }
 }

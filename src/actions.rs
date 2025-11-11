@@ -13,7 +13,7 @@ use x11rb::{
 };
 
 use crate::{
-    config::{self, Config, ConfigDeserialized},
+    config::{self, Config},
     keys::KeyHandler,
     state::*,
 };
@@ -21,10 +21,9 @@ use crate::{
 type Res = Result<(), ReplyOrIdError>;
 
 pub struct ConnectionHandler<'a, C: Connection> {
-    pub connection: &'a C,
+    pub conn: &'a C,
     pub screen: &'a Screen,
     screen_num: usize,
-    pub key_handler: KeyHandler,
     pub id_graphics_context: Gcontext,
     id_inverted_graphics_context: Gcontext,
     pub graphics: (u32, u32, u32),
@@ -32,16 +31,18 @@ pub struct ConnectionHandler<'a, C: Connection> {
     font_width: i16,
     pub atoms: HashMap<String, u32>,
     pub config: Config,
+    pub bar: WindowState,
 }
 
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
-    pub fn new(connection: &'a C, screen_num: usize) -> Result<Self, ReplyOrIdError> {
-        let config = Config::from(ConfigDeserialized::new());
-        let screen = &connection.setup().roots[screen_num];
+    pub fn new(conn: &'a C, screen_num: usize, config: &Config) -> Result<Self, ReplyOrIdError> {
+        let screen = &conn.setup().roots[screen_num];
+        become_window_manager(conn,screen.root)?;
         log::debug!("screen num {screen_num} root {}", screen.root);
-        let id_graphics_context = connection.generate_id()?;
-        let id_inverted_graphics_context = connection.generate_id()?;
-        let id_font = connection.generate_id()?;
+
+        let id_graphics_context = conn.generate_id()?;
+        let id_inverted_graphics_context = conn.generate_id()?;
+        let id_font = conn.generate_id()?;
 
         let atom_strings = vec![
             "WM_PROTOCOLS",
@@ -89,95 +90,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             "_NET_WM_ACTION_BELOW",
         ];
 
-        let atom_nums: Vec<u32> = atom_strings
-            .iter()
-            .flat_map(|s| -> Result<u32, ReplyOrIdError> {
-                Ok(connection.intern_atom(false, s.as_bytes())?.reply()?.atom)
-            })
-            .collect();
-        let len = atom_nums.len() as u32;
+        let atom_nums = get_atom_nums(conn, &atom_strings)?;
+        let atoms = get_atom_mapping(&atom_strings, &atom_nums);
 
-        let mut atoms: HashMap<String, u32> = HashMap::new();
-        atom_strings
-            .iter()
-            .map(|s| s.to_string())
-            .zip(atom_nums.clone())
-            .for_each(|(k, v)| {
-                atoms.insert(k, v);
-            });
-
-        connection.change_property(
-            PropMode::REPLACE,
-            screen.root,
-            atoms["_NET_SUPPORTED"],
-            AtomEnum::ATOM,
-            32,
-            len,
-            unsafe { atom_nums.as_slice().align_to::<u8>().1 },
-        )?;
-
-        let proof_window_id = connection.generate_id()?;
-
-        connection.create_window(
-            COPY_DEPTH_FROM_PARENT,
-            proof_window_id,
-            screen.root,
-            0,
-            0,
-            1,
-            1,
-            0,
-            WindowClass::INPUT_ONLY,
-            0,
-            &CreateWindowAux::new(),
-        )?;
-        connection.change_property(
-            PropMode::REPLACE,
-            screen.root,
-            atoms["_NET_SUPPORTING_WM_CHECK"],
-            AtomEnum::WINDOW,
-            32,
-            1,
-            &proof_window_id.to_ne_bytes(),
-        )?;
-        connection.change_property(
-            PropMode::REPLACE,
-            proof_window_id,
-            atoms["_NET_SUPPORTING_WM_CHECK"],
-            AtomEnum::WINDOW,
-            32,
-            1,
-            &proof_window_id.to_ne_bytes(),
-        )?;
-        connection.change_property(
-            PropMode::REPLACE,
-            proof_window_id,
-            atoms["_NET_WM_NAME"],
-            AtomEnum::STRING,
-            8,
-            "hematite".len() as u32,
-            "hematite".as_bytes(),
-        )?;
-
-        let main_color = connection
-            .alloc_color(
-                screen.default_colormap,
-                config.main_color.0,
-                config.main_color.1,
-                config.main_color.2,
-            )?
-            .reply()?
-            .pixel;
-
-        let secondary_color = connection
-            .alloc_color(
-                screen.default_colormap,
-                config.secondary_color.0,
-                config.secondary_color.1,
-                config.secondary_color.2,
-            )?
-            .reply()?
-            .pixel;
+        let main_color = get_color_id(conn, screen, config.main_color)?;
+        let secondary_color = get_color_id(conn, screen, config.secondary_color)?;
 
         let graphics_context = CreateGCAux::new()
             .graphics_exposures(0)
@@ -191,40 +108,27 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             .foreground(main_color)
             .font(id_font);
 
-        match connection
-            .open_font(id_font, config.font.as_bytes())?
-            .check()
-        {
-            Ok(_) => {
-                log::info!("setting font to {}", config.font);
-            }
-            Err(_) => {
-                log::error!("BAD FONT, USING DEFAULT");
-                connection
-                    .open_font(id_font, config::FONT.as_bytes())?
-                    .check()?
-            }
-        };
+        set_font(conn, id_font, config)?;
 
-        connection.create_gc(id_graphics_context, screen.root, &graphics_context)?;
-        connection.create_gc(
+        conn.create_gc(id_graphics_context, screen.root, &graphics_context)?;
+        conn.create_gc(
             id_inverted_graphics_context,
             screen.root,
             &inverted_graphics_context,
         )?;
 
         //get font parameters
-        let f = connection.query_font(id_font)?.reply()?.max_bounds;
+        let f = conn.query_font(id_font)?.reply()?.max_bounds;
         log::debug!(
             "got font parameters ascent {} descent {} width {}",
             f.ascent,
             f.descent,
             f.character_width
         );
-        connection.close_font(id_font)?;
+        conn.close_font(id_font)?;
 
-        Ok(ConnectionHandler {
-            connection,
+        let handler = ConnectionHandler {
+            conn,
             screen,
             screen_num,
             id_graphics_context,
@@ -232,49 +136,39 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             graphics: (main_color, secondary_color, id_font),
             font_ascent: f.ascent,
             font_width: f.character_width as i16,
-            key_handler: KeyHandler::new(connection, &config)?,
             atoms,
-            config,
-        })
-    }
+            config: config.clone(),
+            bar: WindowState {
+                window: conn.generate_id()?,
+                frame_window: conn.generate_id()?,
+                x: 0,
+                y: 0,
+                width: screen.width_in_pixels,
+                height: f.ascent as u16 * 3 / 2,
+                group: WindowGroup::Floating,
+            },
+        };
 
-    pub fn change_prop(&self, window: Window, atom_name: &str, data: &[u8]) -> Res {
-        Ok(self
-            .connection
-            .change_property(
-                PropMode::REPLACE,
-                window,
-                self.atoms[atom_name],
-                AtomEnum::ATOM,
-                32,
-                data.len() as u32 / 4,
-                data,
-            )?
-            .check()?)
-    }
+        handler.change_atom_prop(screen.root, "_NET_SUPPORTED", unsafe {
+            atom_nums.as_slice().align_to::<u8>().1
+        })?;
+        handler.add_heartbeat_window()?;
+        handler.grab_keys(&KeyHandler::new(conn, &config)?)?;
+        handler.set_cursor()?;
+        handler.create_bar_window()?;
 
-    pub fn remove_prop(&self, window: Window, atom_name: &str) -> Res {
-        self.connection.change_property(
-            PropMode::REPLACE,
-            window,
-            self.atoms[atom_name],
-            AtomEnum::ATOM,
-            32,
-            1,
-            &[0, 0, 0, 0],
-        )?;
-        Ok(())
+        Ok(handler)
     }
 
     pub fn map(&self, window: &WindowState) -> Res {
-        self.connection.map_window(window.frame_window)?;
-        self.connection.map_window(window.window)?;
+        self.conn.map_window(window.frame_window)?;
+        self.conn.map_window(window.window)?;
         Ok(())
     }
 
     pub fn unmap(&self, window: &WindowState) -> Res {
-        self.connection.unmap_window(window.window)?;
-        self.connection.unmap_window(window.frame_window)?;
+        self.conn.unmap_window(window.window)?;
+        self.conn.unmap_window(window.frame_window)?;
         Ok(())
     }
 
@@ -293,12 +187,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             event.height
         );
         let aux = ConfigureWindowAux::from_configure_request(&event);
-        self.connection.configure_window(event.window, &aux)?;
+        self.conn.configure_window(event.window, &aux)?;
         Ok(())
     }
 
     pub fn create_frame_of_window(&self, window: &WindowState) -> Res {
-        self.connection.create_window(
+        self.conn.create_window(
             COPY_DEPTH_FROM_PARENT,
             window.frame_window,
             self.screen.root,
@@ -321,7 +215,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 .border_pixel(self.graphics.1),
         )?;
 
-        self.connection.change_window_attributes(
+        self.conn.change_window_attributes(
             window.window,
             &ChangeWindowAttributesAux::new().event_mask(
                 EventMask::KEY_PRESS
@@ -348,50 +242,48 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         ]
         .map(|a| self.atoms[a]);
 
-        self.change_prop(window.window, "_NET_WM_ALLOWED_ACTIONS", &unsafe {
+        self.change_atom_prop(window.window, "_NET_WM_ALLOWED_ACTIONS", &unsafe {
             allowed_actions.align_to::<u8>().1
         })?;
 
-        self.connection.grab_server()?;
-        self.connection
-            .change_save_set(SetMode::INSERT, window.window)?;
-        self.connection
+        self.conn.grab_server()?;
+        self.conn.change_save_set(SetMode::INSERT, window.window)?;
+        self.conn
             .reparent_window(window.window, window.frame_window, 0, 0)?;
         self.map(window)?;
-        self.connection.ungrab_server()?;
+        self.conn.ungrab_server()?;
         Ok(())
     }
 
     pub fn destroy_window(&self, window: &WindowState) -> Res {
         log::debug!("destroying window: {}", window.window);
-        self.connection
-            .change_save_set(SetMode::DELETE, window.window)?;
-        self.connection
+        self.conn.change_save_set(SetMode::DELETE, window.window)?;
+        self.conn
             .reparent_window(window.window, self.screen.root, window.x, window.y)?;
-        self.connection.destroy_window(window.frame_window)?;
+        self.conn.destroy_window(window.frame_window)?;
 
         Ok(())
     }
 
     pub fn set_focus_window(&self, windows: &Vec<WindowState>, window: &WindowState) -> Res {
         log::debug!("setting focus to: {:?}", window.window);
-        self.connection
+        self.conn
             .set_input_focus(InputFocus::PARENT, window.window, CURRENT_TIME)?;
 
         //set borders
         windows.iter().try_for_each(|w| {
-            self.connection.configure_window(
+            self.conn.configure_window(
                 w.frame_window,
                 &ConfigureWindowAux::new().border_width(self.config.border_size as u32),
             )?;
-            self.connection.change_window_attributes(
+            self.conn.change_window_attributes(
                 w.frame_window,
                 &ChangeWindowAttributesAux::new().border_pixel(self.graphics.0),
             )?;
             Ok::<(), ReplyOrIdError>(())
         })?;
 
-        self.connection.change_window_attributes(
+        self.conn.change_window_attributes(
             window.frame_window,
             &ChangeWindowAttributesAux::new().border_pixel(self.graphics.1),
         )?;
@@ -399,12 +291,12 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn get_focus(&self) -> Result<u32, ReplyOrIdError> {
-        Ok(self.connection.get_input_focus()?.reply()?.focus)
+        Ok(self.conn.get_input_focus()?.reply()?.focus)
     }
 
     pub fn config_window_from_state(&self, window: &WindowState) -> Res {
         log::debug!("configuring window {} from state", window.window);
-        self.connection
+        self.conn
             .configure_window(
                 window.frame_window,
                 &ConfigureWindowAux {
@@ -418,7 +310,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
                 },
             )?
             .check()?;
-        self.connection
+        self.conn
             .configure_window(
                 window.window,
                 &ConfigureWindowAux {
@@ -437,16 +329,16 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn set_focus_to_root(&self) -> Result<(), ReplyOrIdError> {
-        self.connection
+        self.conn
             .set_input_focus(InputFocus::NONE, 1 as u32, CURRENT_TIME)?;
         Ok(())
     }
 
-    pub fn create_bar_window(&self, window: Window) -> Res {
-        log::debug!("creating bar: {}", window);
-        self.connection.create_window(
+    pub fn create_bar_window(&self) -> Res {
+        log::debug!("creating bar: {}", self.bar.window);
+        self.conn.create_window(
             COPY_DEPTH_FROM_PARENT,
-            window,
+            self.bar.window,
             self.screen.root,
             0,
             0,
@@ -457,12 +349,13 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             0,
             &CreateWindowAux::new().background_pixel(self.graphics.0),
         )?;
+        self.create_frame_of_window(&self.bar)?;
         Ok(())
     }
 
     pub fn kill_focus(&self, focus: u32) -> Res {
         log::debug!("killing focus window {focus}");
-        self.connection.send_event(
+        self.conn.send_event(
             false,
             focus,
             EventMask::NO_EVENT,
@@ -476,9 +369,147 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
+    pub fn draw_bar(&self, wm_state: &ManagerState, active_window: Option<Window>) -> Res {
+        let bar_text = match active_window {
+            Some(w) => self.get_window_name(w)?,
+            None => "".to_owned(),
+        };
+
+        self.conn.clear_area(
+            false,
+            self.bar.window,
+            self.bar.x,
+            self.bar.y,
+            self.bar.width / 2,
+            self.bar.height,
+        )?;
+
+        let h = self.font_ascent as u16 * 3 / 2;
+
+        //draw regular tag rect
+        self.conn.poly_fill_rectangle(
+            self.bar.window,
+            self.id_inverted_graphics_context,
+            &(1..=9)
+                .filter(|x| *x != wm_state.active_tag + 1)
+                .map(|x| self.create_tag_rectangle(h, x))
+                .collect::<Vec<_>>(),
+        )?;
+
+        //draw indicator that windows are active in tag
+        self.conn.poly_fill_rectangle(
+            self.bar.window,
+            self.id_graphics_context,
+            &(1..=9)
+                .filter(|x| {
+                    *x != wm_state.active_tag + 1 && !wm_state.tags[x - 1].windows.is_empty()
+                })
+                .map(|x| Rectangle {
+                    x: h as i16 * (x as i16 - 1) + h as i16 / 9,
+                    y: h as i16 / 9,
+                    width: h / 7,
+                    height: h / 7,
+                })
+                .collect::<Vec<Rectangle>>(),
+        )?;
+
+        //draw active tag rect
+        self.conn.poly_fill_rectangle(
+            self.bar.window,
+            self.id_graphics_context,
+            &[self.create_tag_rectangle(h, wm_state.active_tag + 1)],
+        )?;
+
+        if !wm_state.tags[wm_state.active_tag].windows.is_empty() {
+            self.conn.poly_fill_rectangle(
+                self.bar.window,
+                self.id_inverted_graphics_context,
+                &[Rectangle {
+                    x: h as i16 * (wm_state.active_tag as i16) + h as i16 / 9,
+                    y: h as i16 / 9,
+                    width: h / 7,
+                    height: h / 7,
+                }],
+            )?;
+        }
+
+        let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
+        //draw regular text
+        (1..=9).try_for_each(|x| {
+            let text = x.to_string();
+            if x == wm_state.active_tag + 1 {
+                self.conn.image_text8(
+                    self.bar.window,
+                    self.id_inverted_graphics_context,
+                    (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
+                    text_y,
+                    text.as_bytes(),
+                )?;
+            } else {
+                self.conn.image_text8(
+                    self.bar.window,
+                    self.id_graphics_context,
+                    (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
+                    text_y,
+                    text.as_bytes(),
+                )?;
+            }
+            Ok::<(), ReplyOrIdError>(())
+        })?;
+
+        //draw window name text
+        self.conn.image_text8(
+            self.bar.window,
+            self.id_graphics_context,
+            h as i16 * 9 + h as i16 / 2,
+            text_y,
+            bar_text.as_bytes(),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn draw_status_bar(&self) -> Res {
+        let status_text = self.get_window_name(self.screen.root)?;
+        self.conn
+            .clear_area(
+                false,
+                self.bar.window,
+                self.bar.width as i16 - (status_text.len() + 5) as i16 * self.font_width,
+                self.bar.y,
+                self.bar.width,
+                self.bar.height,
+            )?
+            .check()?;
+        self.conn
+            .image_text8(
+                self.bar.window,
+                self.id_graphics_context,
+                self.bar.width as i16 - status_text.len() as i16 * self.font_width,
+                (self.bar.height as i16 / 2) + self.font_ascent / 3,
+                status_text.as_bytes(),
+            )?
+            .check()?;
+        Ok(())
+    }
+
+    pub fn set_fullscreen(&self, mut window: WindowState) -> Res {
+        window.x = 0;
+        window.y = 0;
+        window.width = self.screen.width_in_pixels;
+        window.height = self.screen.height_in_pixels;
+        self.config_window_from_state(&window)?;
+        self.change_atom_prop(
+            window.window,
+            "_NET_WM_STATE",
+            &self.atoms["_NET_WM_STATE_FULLSCREEN"].to_ne_bytes(),
+        )?;
+        Ok(())
+    }
+
     fn get_window_name(&self, window: Window) -> Result<String, ReplyOrIdError> {
         match String::from_utf8(
-            self.connection
+            self.conn
                 .get_property(
                     false,
                     window,
@@ -504,158 +535,103 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         }
     }
 
-    pub fn draw_bar(&self, wm_state: &ManagerState, active_window: Option<Window>) -> Res {
-        let bar_text = match active_window {
-            Some(w) => self.get_window_name(w)?,
-            None => "".to_owned(),
-        };
-
-        self.connection.clear_area(
-            false,
-            wm_state.bar.window,
-            wm_state.bar.x,
-            wm_state.bar.y,
-            wm_state.bar.width / 2,
-            wm_state.bar.height,
+    fn set_cursor(&self) -> Res {
+        let cursor = cursor::Handle::new(
+            self.conn,
+            self.screen_num,
+            &resource_manager::new_from_default(self.conn)?,
+        )?
+        .reply()?
+        .load_cursor(self.conn, "left_ptr")?;
+        self.conn.change_window_attributes(
+            self.screen.root,
+            &ChangeWindowAttributesAux::new().cursor(cursor),
         )?;
-
-        let h = self.font_ascent as u16 * 3 / 2;
-
-        //draw regular tag rect
-        self.connection.poly_fill_rectangle(
-            wm_state.bar.window,
-            self.id_inverted_graphics_context,
-            &(1..=9)
-                .filter(|x| *x != wm_state.active_tag + 1)
-                .map(|x| self.create_tag_rectangle(h, x))
-                .collect::<Vec<_>>(),
-        )?;
-
-        //draw indicator that windows are active in tag
-        self.connection.poly_fill_rectangle(
-            wm_state.bar.window,
-            self.id_graphics_context,
-            &(1..=9)
-                .filter(|x| {
-                    *x != wm_state.active_tag + 1 && !wm_state.tags[x - 1].windows.is_empty()
-                })
-                .map(|x| Rectangle {
-                    x: h as i16 * (x as i16 - 1) + h as i16 / 9,
-                    y: h as i16 / 9,
-                    width: h / 7,
-                    height: h / 7,
-                })
-                .collect::<Vec<Rectangle>>(),
-        )?;
-
-        //draw active tag rect
-        self.connection.poly_fill_rectangle(
-            wm_state.bar.window,
-            self.id_graphics_context,
-            &[self.create_tag_rectangle(h, wm_state.active_tag + 1)],
-        )?;
-
-        if !wm_state.tags[wm_state.active_tag].windows.is_empty() {
-            self.connection.poly_fill_rectangle(
-                wm_state.bar.window,
-                self.id_inverted_graphics_context,
-                &[Rectangle {
-                    x: h as i16 * (wm_state.active_tag as i16) + h as i16 / 9,
-                    y: h as i16 / 9,
-                    width: h / 7,
-                    height: h / 7,
-                }],
-            )?;
-        }
-
-        let text_y = (h as i16 / 2) + self.font_ascent / 5 * 2;
-        //draw regular text
-        (1..=9).try_for_each(|x| {
-            let text = x.to_string();
-            if x == wm_state.active_tag + 1 {
-                self.connection.image_text8(
-                    wm_state.bar.window,
-                    self.id_inverted_graphics_context,
-                    (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
-                    text_y,
-                    text.as_bytes(),
-                )?;
-            } else {
-                self.connection.image_text8(
-                    wm_state.bar.window,
-                    self.id_graphics_context,
-                    (h * (x as u16 - 1) + (h / 2 - (self.font_width as u16 / 2))) as i16,
-                    text_y,
-                    text.as_bytes(),
-                )?;
-            }
-            Ok::<(), ReplyOrIdError>(())
-        })?;
-
-        //draw window name text
-        self.connection.image_text8(
-            wm_state.bar.window,
-            self.id_graphics_context,
-            h as i16 * 9 + h as i16 / 2,
-            text_y,
-            bar_text.as_bytes(),
-        )?;
-
         Ok(())
     }
 
-    pub fn draw_status_bar(&self, w: &WindowState) -> Res {
-        let status_text = self.get_window_name(self.screen.root)?;
-        self.connection
-            .clear_area(
-                false,
-                w.window,
-                w.width as i16 - (status_text.len() + 5) as i16 * self.font_width,
-                w.y,
-                w.width,
-                w.height,
-            )?
-            .check()?;
-        self.connection
-            .image_text8(
-                w.window,
-                self.id_graphics_context,
-                w.width as i16 - status_text.len() as i16 * self.font_width,
-                (w.height as i16 / 2) + self.font_ascent / 3,
-                status_text.as_bytes(),
+    fn change_atom_prop(&self, window: Window, property: &str, data: &[u8]) -> Res {
+        self.conn
+            .change_property(
+                PropMode::REPLACE,
+                window,
+                self.atoms[property],
+                AtomEnum::ATOM,
+                32,
+                data.len() as u32 / 4,
+                data,
             )?
             .check()?;
         Ok(())
     }
-    pub fn become_window_manager(&self) -> Res {
-        let change = ChangeWindowAttributesAux::default().event_mask(
-            EventMask::SUBSTRUCTURE_REDIRECT
-                | EventMask::SUBSTRUCTURE_NOTIFY
-                | EventMask::KEY_PRESS
-                | EventMask::PROPERTY_CHANGE,
-        );
-        let result = self
-            .connection
-            .change_window_attributes(self.screen.root, &change)?
-            .check();
 
-        if let Err(ReplyError::X11Error(ref error)) = result {
-            if error.error_kind == ErrorKind::Access {
-                log::error!("another wm is running");
-                exit(1);
-            } else {
-            }
-        } else {
-            log::info!("became window manager successfully");
-        }
-
-        self.set_focus_to_root()?;
-
+    pub fn remove_atom_prop(&self, window: Window, property: &str) -> Res {
+        self.conn
+            .change_property(
+                PropMode::REPLACE,
+                window,
+                self.atoms[property],
+                AtomEnum::ATOM,
+                32,
+                1,
+                &[0, 0, 0, 0],
+            )?
+            .check()?;
         Ok(())
     }
-    pub fn grab_keys(&self) -> Res {
-        self.key_handler.hotkeys.iter().try_for_each(|h| {
-            self.connection
+
+    fn add_heartbeat_window(&self) -> Res {
+        let support_atom = "_NET_SUPPORTING_WM_CHECK";
+        let name_atom = "_NET_WM_NAME";
+        let proof_window_id = self.conn.generate_id()?;
+
+        self.conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            proof_window_id,
+            self.screen.root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_ONLY,
+            0,
+            &CreateWindowAux::new(),
+        )?;
+
+        self.conn.change_property(
+            PropMode::REPLACE,
+            self.screen.root,
+            self.atoms[support_atom],
+            AtomEnum::WINDOW,
+            32,
+            1,
+            &proof_window_id.to_ne_bytes(),
+        )?;
+        self.conn.change_property(
+            PropMode::REPLACE,
+            proof_window_id,
+            self.atoms[support_atom],
+            AtomEnum::WINDOW,
+            32,
+            1,
+            &proof_window_id.to_ne_bytes(),
+        )?;
+        self.conn.change_property(
+            PropMode::REPLACE,
+            proof_window_id,
+            self.atoms[name_atom],
+            AtomEnum::STRING,
+            8,
+            "hematite".len() as u32,
+            "hematite".as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    fn grab_keys(&self, handler: &KeyHandler) -> Res {
+        handler.hotkeys.iter().try_for_each(|h| {
+            self.conn
                 .grab_key(
                     false,
                     self.screen.root,
@@ -668,38 +644,6 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         })?;
         Ok(())
     }
-
-    pub fn set_cursor(&self) -> Res {
-        let cursor = cursor::Handle::new(
-            self.connection,
-            self.screen_num,
-            &resource_manager::new_from_default(self.connection)?,
-        )?
-        .reply()?
-        .load_cursor(self.connection, "left_ptr")?;
-        self.connection.change_window_attributes(
-            self.screen.root,
-            &ChangeWindowAttributesAux::new().cursor(cursor),
-        )?;
-        Ok(())
-    }
-
-    pub fn set_fullscreen(
-        &self,
-        mut window: WindowState,
-    ) -> Res {
-        window.x = 0;
-        window.y = 0;
-        window.width = self.screen.width_in_pixels;
-        window.height = self.screen.height_in_pixels;
-        self.config_window_from_state(&window)?;
-        self.change_prop(
-            window.window,
-            "_NET_WM_STATE",
-            &self.atoms["_NET_WM_STATE_FULLSCREEN"].to_ne_bytes(),
-        )?;
-        Ok(())
-    }
 }
 
 pub fn spawn_command(command: &str) {
@@ -707,4 +651,76 @@ pub fn spawn_command(command: &str) {
         Ok(_) => (),
         Err(e) => log::error!("error when spawning command {e:?}"),
     };
+}
+
+fn get_atom_mapping(atom_strings: &[&str], atom_nums: &[u32]) -> HashMap<String, u32> {
+    let mut atoms: HashMap<String, u32> = HashMap::new();
+    atom_strings
+        .iter()
+        .map(|s| s.to_string())
+        .zip(atom_nums)
+        .for_each(|(k, v)| {
+            atoms.insert(k, *v);
+        });
+    atoms
+}
+
+fn get_atom_nums<C: Connection>(
+    conn: &C,
+    atom_strings: &[&str],
+) -> Result<Vec<u32>, ReplyOrIdError> {
+    Ok(atom_strings
+        .iter()
+        .flat_map(|s| -> Result<u32, ReplyOrIdError> {
+            Ok(conn.intern_atom(false, s.as_bytes())?.reply()?.atom)
+        })
+        .collect())
+}
+
+fn become_window_manager<C:Connection>(conn: &C, root: u32) -> Res {
+        let change = ChangeWindowAttributesAux::default().event_mask(
+            EventMask::SUBSTRUCTURE_REDIRECT
+                | EventMask::SUBSTRUCTURE_NOTIFY
+                | EventMask::KEY_PRESS
+                | EventMask::PROPERTY_CHANGE,
+        );
+        let result = 
+            conn
+            .change_window_attributes(root, &change)?
+            .check();
+
+        if let Err(ReplyError::X11Error(ref error)) = result {
+            if error.error_kind == ErrorKind::Access {
+                log::error!("another wm is running");
+                exit(1);
+            } else {
+            }
+        } else {
+            log::info!("became window manager successfully");
+        }
+        Ok(())
+    }
+
+fn get_color_id<C: Connection>(
+    conn: &C,
+    screen: &Screen,
+    color: (u16, u16, u16),
+) -> Result<u32, ReplyOrIdError> {
+    Ok(conn
+        .alloc_color(screen.default_colormap, color.0, color.1, color.2)?
+        .reply()?
+        .pixel)
+}
+
+fn set_font<C: Connection>(conn: &C, id_font: u32, config: &Config) -> Res {
+    match conn.open_font(id_font, config.font.as_bytes())?.check() {
+        Ok(_) => {
+            log::info!("setting font to {}", config.font);
+        }
+        Err(_) => {
+            log::error!("BAD FONT, USING DEFAULT");
+            conn.open_font(id_font, config::FONT.as_bytes())?.check()?
+        }
+    };
+    Ok(())
 }
