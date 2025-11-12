@@ -1,16 +1,6 @@
 use std::fmt::Debug;
-
-use crate::actions::*;
-use crate::keys::HotkeyAction;
-use crate::keys::KeyHandler;
-
-use x11rb::connection::Connection;
-use x11rb::errors::ReplyOrIdError;
-use x11rb::protocol::Event;
-use x11rb::protocol::xproto::*;
-
+use x11rb::{errors::ReplyOrIdError};
 type Window = u32;
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum WindowGroup {
     Master,
@@ -30,7 +20,7 @@ pub struct WindowState {
 }
 
 impl WindowState {
-    fn new(window: Window, frame_window: Window) -> Result<WindowState, ReplyOrIdError> {
+    pub fn new(window: Window, frame_window: Window) -> Result<WindowState, ReplyOrIdError> {
         Ok(WindowState {
             window,
             frame_window,
@@ -38,7 +28,7 @@ impl WindowState {
             y: 0,
             width: 100,
             height: 100,
-            group: WindowGroup::Floating,
+            group: WindowGroup::Stack,
         })
     }
     pub fn print(&self) {
@@ -70,36 +60,38 @@ impl Tag {
     }
 }
 
-struct TilingPreferences {
-    gap: u32,
-    ratio: f32,
+pub struct TilingInfo {
+    pub gap: u16,
+    pub ratio: f32,
+    pub width: u16,
+    pub height: u16,
+    pub bar_height: u16,
 }
 
-pub struct ManagerState {
+pub struct StateHandler {
     pub tags: Vec<Tag>,
     pub active_tag: usize,
-    tiling: TilingPreferences,
+    pub tiling: TilingInfo,
 }
 
-type Res = Result<(), ReplyOrIdError>;
-
-impl ManagerState {
-    pub fn new<C: Connection>(handler: &ConnectionHandler<C>) -> Result<Self, ReplyOrIdError> {
-        Ok(ManagerState {
+impl StateHandler {
+    pub fn new(tiling: TilingInfo) -> Self {
+        StateHandler {
             tags: (0..=8).map(|n| Tag::new(n)).collect(),
             active_tag: 0,
-            tiling: TilingPreferences {
-                gap: handler.config.spacing,
-                ratio: handler.config.ratio,
-            },
-        })
+            tiling,
+        }
     }
 
-    pub fn get_active_tag(&self) -> &Vec<WindowState> {
+    pub fn get_focus(&self) -> Option<u32> {
+        self.tags[self.active_tag].focus
+    }
+
+    pub fn get_active_tag_windows(&self) -> &Vec<WindowState> {
         &self.tags[self.active_tag].windows
     }
 
-    pub fn get_mut_active_tag(&mut self) -> &mut Vec<WindowState> {
+    pub fn get_mut_active_tag_windows(&mut self) -> &mut Vec<WindowState> {
         &mut self.tags[self.active_tag].windows
     }
 
@@ -117,212 +109,83 @@ impl ManagerState {
             .find(|w| w.window == window || w.frame_window == window)
     }
 
-    fn get_index_of_window(&self, window: Window) -> Option<usize> {
-        self.tags[self.active_tag]
-            .windows
-            .iter()
-            .position(|w| w.window == window || w.frame_window == window)
+    pub fn add_window(&mut self, window: WindowState) {
+        log::debug!("adding window to tag {}", self.active_tag);
+        self.tags[self.active_tag].windows.push(window);
+        self.tags[self.active_tag].focus = Some(window.window);
     }
 
-    pub fn handle_event<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        key_handler: &KeyHandler,
-        event: Event,
-    ) -> Res {
-        match event {
-            Event::MapRequest(e) => {
-                self.handle_map_request(conn, e)?;
-            }
-            Event::UnmapNotify(e) => {
-                self.handle_unmap_notify(conn, e)?;
-            }
-            Event::KeyPress(e) => {
-                self.handle_keypress(conn, key_handler,e)?;
-            }
-            Event::EnterNotify(e) => {
-                self.handle_enter(conn, e)?;
-            }
-            Event::ConfigureRequest(e) => {
-                match self.get_window_state(e.window) {
-                    Some(_) => conn.handle_config(e)?,
-                    None => (),
-                };
-            }
-            Event::ClientMessage(e) => {
-                log::trace!("client message: window {}", e.window);
-                self.handle_client_message(conn, e)?;
-            }
-            _ => (),
+    pub fn set_tag_focus_to_master(&mut self) {
+        log::debug!("setting tag focus to master");
+        self.tags[self.active_tag].focus = match self.tags[self.active_tag].windows.last() {
+            Some(w) => Some(w.window),
+            None => None,
         };
-        Ok(())
     }
 
-    fn handle_client_message<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        event: ClientMessageEvent,
-    ) -> Res {
-        let data = event.data.as_data32();
+    pub fn set_last_master_others_stack(&mut self) {
+        self.get_mut_active_tag_windows()
+            .iter_mut()
+            .filter(|w| w.group != WindowGroup::Floating)
+            .for_each(|w| w.group = WindowGroup::Stack);
 
-        let event_type =
-            match String::from_utf8(conn.conn.get_atom_name(event.type_)?.reply()?.name) {
-                Ok(s) => s,
-                Err(_) => return Ok(()),
+        if let Some(w) = self.get_mut_active_tag_windows().last_mut() {
+            if w.group == WindowGroup::Floating {
+                return;
             };
+            w.group = WindowGroup::Master;
+        };
+    }
 
-        if data[1]==0 {
-            return Ok(());
-        }
-        let first_property =
-            match String::from_utf8(conn.conn.get_atom_name(data[1])?.reply()?.name) {
-                Ok(s) => s,
-                Err(_) => return Ok(()),
-            };
+    pub fn tile_windows(&mut self) {
+        log::debug!("tiling tag {}", self.active_tag);
 
-        log::debug!("got client data {data:?}");
-        log::debug!(
-            "GOT CLIENT EVENT window {} atom {:?} first prop {:?}",
-            event.window,
-            event_type,
-            first_property
-        );
+        let (gap, ratio) = (self.tiling.gap, self.tiling.ratio);
+        let (maxw, maxh) = (self.tiling.width, self.tiling.height);
+        let bar_height = self.tiling.bar_height;
 
-        match event_type.as_str() {
-            "_NET_WM_STATE" => match first_property.as_str() {
-                "_NET_WM_STATE_FULLSCREEN" => {
-                    let state = match self.get_mut_window_state(event.window) {
-                        Some(s) => s,
-                        None => return Ok(()),
+        let stack_count = self.get_active_tag_windows().len().clamp(1, 100) - 1;
+
+        self.get_mut_active_tag_windows()
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, w)| match w.group {
+                WindowGroup::Master => {
+                    w.x = 0 + gap as i16;
+                    w.y = 0 + gap as i16 + bar_height as i16;
+                    w.width = if stack_count == 0 {
+                        maxw - gap as u16 * 2
+                    } else {
+                        ((maxw as f32 * (1.0 - ratio)) - (gap as f32 * 2.0)) as u16
                     };
-                    let window = state.window;
-                    let state_cloned = state.clone();
-                    match data[0] {
-                        0 => {
-                            state.group = WindowGroup::Stack;
-                            conn.remove_atom_prop(window,"_NET_WM_STATE")?;
-                            self.refresh(conn)?;
-                        }
-                        1 => {
-                            state.group = WindowGroup::Floating;
-                            conn.set_fullscreen(state_cloned)?;
-                        }
-                        2 => {}
-                        _ => {}
+                    w.height = maxh - gap as u16 * 2 - bar_height;
+                }
+                WindowGroup::Stack => {
+                    w.x = (maxw as f32 * (1.0 - ratio)) as i16;
+                    w.y = if i == 0 {
+                        (i * (maxh as usize / stack_count) + gap as usize) as i16
+                            + bar_height as i16
+                    } else {
+                        (i * (maxh as usize / stack_count)) as i16
+                    };
+                    w.width = (maxw as f32 * ratio) as u16 - gap as u16;
+
+                    w.height = if i == 0 {
+                        (maxh as usize / stack_count) as u16 - gap as u16 * 2 - bar_height
+                    } else {
+                        (maxh as usize / stack_count) as u16 - gap as u16
                     };
                 }
-                _ => {}
-            },
-            _ => {}
-        };
-
-        Ok(())
+                _ => (),
+            });
     }
 
-    fn handle_unmap_notify<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        event: UnmapNotifyEvent,
-    ) -> Res {
-        let window = match self.get_window_state(event.window) {
-            Some(w) => w,
-            None => return Ok(()),
-        };
-        log::debug!(
-            "EVENT UNMAP window {} event {} from config {} response {}",
-            event.window,
-            event.event,
-            event.from_configure,
-            event.response_type
-        );
-
-        //side effect
-        conn.destroy_window(window)?;
-
-        self.get_mut_active_tag()
-            .retain(|w| w.window != event.window);
-        self.set_tag_focus_to_master();
-        self.refresh(conn)
+    pub fn refresh(&mut self) {
+        self.set_last_master_others_stack();
+        self.tile_windows();
     }
 
-    fn handle_map_request<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        event: MapRequestEvent,
-    ) -> Res {
-        if let Some(_) = self.get_window_state(event.window) {
-            return Ok(());
-        };
-
-        log::debug!(
-            "EVENT MAP window {} parent {} response {}",
-            event.window,
-            event.parent,
-            event.response_type
-        );
-
-        let window = WindowState::new(event.window, conn.conn.generate_id()?)?;
-
-        conn.create_frame_of_window(&window)?;
-        self.add_window(window);
-        self.refresh(conn)
-    }
-
-    fn handle_keypress<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        handler: &KeyHandler,
-        event: KeyPressEvent,
-    ) -> Res {
-        let action = match handler.get_action(event) {
-            Some(a) => a,
-            None => return Ok(()),
-        };
-        log::debug!(
-            "EVENT KEYPRESS code {} sym {:?} action {:?}",
-            event.detail,
-            event.state,
-            action
-        );
-
-        match action {
-            HotkeyAction::SwitchTag(n) => {
-                self.change_active_tag(conn, n - 1)?;
-            }
-            HotkeyAction::MoveWindow(n) => {
-                self.move_window(conn, n - 1)?;
-            }
-            HotkeyAction::Spawn(command) => {
-                crate::actions::spawn_command(&command);
-            }
-            HotkeyAction::ExitFocusedWindow => {
-                let focus = match self.tags[self.active_tag].focus {
-                    Some(f) => f,
-                    None => return Ok(()),
-                };
-                conn.kill_focus(focus)?;
-            }
-            HotkeyAction::ChangeRatio(change) => {
-                self.tiling.ratio = (self.tiling.ratio + change).clamp(0.15, 0.85);
-            }
-            HotkeyAction::NextFocus(change) => {
-                self.switch_focus_next(change);
-            }
-            HotkeyAction::NextTag(change) => {
-                self.change_active_tag(
-                    conn,
-                    (self.active_tag as i16 + change).rem_euclid(9) as usize,
-                )?;
-            }
-            HotkeyAction::SwapMaster => {
-                self.swap_master();
-            }
-        };
-        self.refresh(conn)?;
-        Ok(())
-    }
-
-    fn swap_master(&mut self) {
+    pub fn swap_master(&mut self) {
         let focus_window = match self.tags[self.active_tag].focus {
             Some(w) => w,
             None => return,
@@ -343,13 +206,13 @@ impl ManagerState {
         self.tags[self.active_tag].windows.swap(index_f, index_m);
     }
 
-    fn switch_focus_next(&mut self, change: i16) {
+    pub fn switch_focus_next(&mut self, change: i16) {
         let focus_window = match self.tags[self.active_tag].focus {
             Some(w) => w,
             None => return,
         };
         let focus_index = (match self
-            .get_active_tag()
+            .get_active_tag_windows()
             .iter()
             .position(|w| w.window == focus_window)
         {
@@ -357,183 +220,12 @@ impl ManagerState {
             None => return,
         } as i16
             + change)
-            .rem_euclid(self.get_active_tag().len() as i16);
-        self.tags[self.active_tag].focus = Some(self.get_active_tag()[focus_index as usize].window);
+            .rem_euclid(self.get_active_tag_windows().len() as i16);
+        self.tags[self.active_tag].focus =
+            Some(self.get_active_tag_windows()[focus_index as usize].window);
     }
 
-    fn handle_enter<C: Connection>(
-        &mut self,
-        conn: &ConnectionHandler<C>,
-        event: EnterNotifyEvent,
-    ) -> Res {
-        log::debug!(
-            "EVENT ENTER child {} detail {:?} event {}",
-            event.child,
-            event.detail,
-            event.event
-        );
-
-        if let Some(w) = self.get_window_state(event.child) {
-            self.tags[self.active_tag].focus = Some(w.window);
-        };
-        if let Some(w) = self.get_window_state(event.event) {
-            self.tags[self.active_tag].focus = Some(w.window);
-        };
-        self.refresh(conn)?;
-        Ok(())
-    }
-
-    fn change_active_tag<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
-        if self.active_tag == tag {
-            log::error!("tried switching to already active tag");
-            return Ok(());
-        }
-        log::debug!("changing tag to {tag}");
-        self.unmap_all(conn)?;
-        self.active_tag = tag;
-        self.map_all(conn)?;
-        Ok(())
-    }
-
-    fn map_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_tag().iter().try_for_each(|w| conn.map(w))
-    }
-
-    fn unmap_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_tag().iter().try_for_each(|w| conn.unmap(w))
-    }
-
-    fn config_all<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.get_active_tag()
-            .iter()
-            .try_for_each(|w| conn.config_window_from_state(w))
-    }
-
-    fn move_window<C: Connection>(&mut self, conn: &ConnectionHandler<C>, tag: usize) -> Res {
-        if self.active_tag == tag {
-            log::error!("tried moving window to already active tag");
-            return Ok(());
-        }
-        log::debug!("moving window to tag {tag}");
-
-        let focus_window = conn.get_focus()?;
-
-        let state = if let Some(s) = self.get_window_state(focus_window) {
-            *s
-        } else {
-            return Ok(());
-        };
-        conn.unmap(&state)?;
-
-        self.tags[tag].windows.push(state);
-        self.tags[self.active_tag]
-            .windows
-            .retain(|w| w.window != focus_window);
-        self.set_tag_focus_to_master();
-        Ok(())
-    }
-
-    fn add_window(&mut self, window: WindowState) {
-        log::debug!("adding window to tag {}", self.active_tag);
-        self.tags[self.active_tag].windows.push(window);
-        self.tags[self.active_tag].focus = Some(window.window);
-    }
-
-    fn set_tag_focus_to_master(&mut self) {
-        log::debug!("setting tag focus to master");
-        self.tags[self.active_tag].focus = match self.tags[self.active_tag].windows.last() {
-            Some(w) => Some(w.window),
-            None => None,
-        };
-    }
-
-    fn refresh<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        self.set_last_master_others_stack()?;
-        self.tile_windows(conn)?;
-        self.config_all(conn)?;
-        self.refresh_focus(conn)?;
-        conn.refresh(self)?;
-        self.print_state();
-        Ok(())
-    }
-
-    fn set_last_master_others_stack(&mut self) -> Res {
-        self.get_mut_active_tag()
-            .iter_mut()
-            .filter(|w| w.group != WindowGroup::Floating)
-            .for_each(|w| w.group = WindowGroup::Stack);
-
-        if let Some(w) = self.get_mut_active_tag().last_mut() {
-            w.group = WindowGroup::Master;
-        };
-        Ok(())
-    }
-
-    fn tile_windows<C: Connection>(&mut self, conn: &ConnectionHandler<C>) -> Res {
-        log::debug!("tiling tag {}", self.active_tag);
-
-        let bar_height = conn.bar.height;
-        let (gap, ratio) = (self.tiling.gap, self.tiling.ratio);
-        let (maxw, maxh) = (conn.screen.width_in_pixels, conn.screen.height_in_pixels);
-
-        let stack_count = self.get_active_tag().len().clamp(1, 100) - 1;
-
-        self.get_mut_active_tag()
-            .iter_mut()
-            .enumerate()
-            .try_for_each(|(i, w)| -> Res {
-                match w.group {
-                    WindowGroup::Master => {
-                        w.x = 0 + gap as i16;
-                        w.y = 0 + gap as i16 + bar_height as i16;
-                        w.width = if stack_count == 0 {
-                            maxw - gap as u16 * 2
-                        } else {
-                            ((maxw as f32 * (1.0 - ratio)) - (gap as f32 * 2.0)) as u16
-                        };
-                        w.height = maxh - gap as u16 * 2 - bar_height;
-                        Ok(())
-                    }
-                    WindowGroup::Stack => {
-                        w.x = (maxw as f32 * (1.0 - ratio)) as i16;
-                        w.y = if i == 0 {
-                            (i * (maxh as usize / stack_count) + gap as usize) as i16
-                                + bar_height as i16
-                        } else {
-                            (i * (maxh as usize / stack_count)) as i16
-                        };
-                        w.width = (maxw as f32 * ratio) as u16 - gap as u16;
-
-                        w.height = if i == 0 {
-                            (maxh as usize / stack_count) as u16 - gap as u16 * 2 - bar_height
-                        } else {
-                            (maxh as usize / stack_count) as u16 - gap as u16
-                        };
-                        Ok(())
-                    }
-                    _ => Ok(()),
-                }
-            })?;
-        Ok(())
-    }
-
-    fn refresh_focus<C: Connection>(&self, conn: &ConnectionHandler<C>) -> Res {
-        match self.tags[self.active_tag].focus {
-            Some(w) => {
-                let window = match self.get_window_state(w) {
-                    Some(w) => w,
-                    None => return Ok(()),
-                };
-                conn.set_focus_window(self.get_active_tag(), window)?;
-            }
-            None => {
-                conn.set_focus_to_root()?;
-            }
-        };
-        Ok(())
-    }
-
-    fn print_state(&self) {
+    pub fn print_state(&self) {
         log::debug!(
             "Manager state: active tag {} focus {:?}",
             self.active_tag,
@@ -546,5 +238,12 @@ impl ManagerState {
                 log::debug!("tag {} windows:", t.tag);
                 t.windows.iter().for_each(|w| w.print());
             });
+    }
+
+    fn get_index_of_window(&self, window: Window) -> Option<usize> {
+        self.tags[self.active_tag]
+            .windows
+            .iter()
+            .position(|w| w.window == window || w.frame_window == window)
     }
 }

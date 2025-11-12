@@ -18,7 +18,7 @@ use crate::{
     state::*,
 };
 
-type Res = Result<(), ReplyOrIdError>;
+pub type Res = Result<(), ReplyOrIdError>;
 
 pub struct ConnectionHandler<'a, C: Connection> {
     pub conn: &'a C,
@@ -37,7 +37,7 @@ pub struct ConnectionHandler<'a, C: Connection> {
 impl<'a, C: Connection> ConnectionHandler<'a, C> {
     pub fn new(conn: &'a C, screen_num: usize, config: &Config) -> Result<Self, ReplyOrIdError> {
         let screen = &conn.setup().roots[screen_num];
-        become_window_manager(conn,screen.root)?;
+        become_window_manager(conn, screen.root)?;
         log::debug!("screen num {screen_num} root {}", screen.root);
 
         let id_graphics_context = conn.generate_id()?;
@@ -172,7 +172,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn refresh(&self, wm_state: &ManagerState) -> Res {
+    pub fn refresh(&self, wm_state: &StateHandler) -> Res {
         self.draw_bar(wm_state, wm_state.tags[wm_state.active_tag].focus)?;
         Ok(())
     }
@@ -272,6 +272,9 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
         //set borders
         windows.iter().try_for_each(|w| {
+            if w.group == WindowGroup::Floating {
+                return Ok(());
+            }
             self.conn.configure_window(
                 w.frame_window,
                 &ConfigureWindowAux::new().border_width(self.config.border_size as u32),
@@ -369,7 +372,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn draw_bar(&self, wm_state: &ManagerState, active_window: Option<Window>) -> Res {
+    pub fn draw_bar(&self, wm_state: &StateHandler, active_window: Option<Window>) -> Res {
         let bar_text = match active_window {
             Some(w) => self.get_window_name(w)?,
             None => "".to_owned(),
@@ -493,18 +496,25 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         Ok(())
     }
 
-    pub fn set_fullscreen(&self, mut window: WindowState) -> Res {
-        window.x = 0;
-        window.y = 0;
-        window.width = self.screen.width_in_pixels;
-        window.height = self.screen.height_in_pixels;
-        self.config_window_from_state(&window)?;
+    pub fn set_fullscreen(&self, window: &WindowState) -> Res {
+        self.config_window_from_state(window)?;
         self.change_atom_prop(
             window.window,
             "_NET_WM_STATE",
             &self.atoms["_NET_WM_STATE_FULLSCREEN"].to_ne_bytes(),
         )?;
+        self.conn.configure_window(
+            window.frame_window,
+            &ConfigureWindowAux::new().border_width(0),
+        )?;
         Ok(())
+    }
+
+    pub fn get_atom_name(&self, atom: u32) -> Result<String, ReplyOrIdError> {
+        match String::from_utf8(self.conn.get_atom_name(atom)?.reply()?.name) {
+            Ok(s) => Ok(s),
+            Err(_) => Ok("".to_string()),
+        }
     }
 
     fn get_window_name(&self, window: Window) -> Result<String, ReplyOrIdError> {
@@ -677,29 +687,26 @@ fn get_atom_nums<C: Connection>(
         .collect())
 }
 
-fn become_window_manager<C:Connection>(conn: &C, root: u32) -> Res {
-        let change = ChangeWindowAttributesAux::default().event_mask(
-            EventMask::SUBSTRUCTURE_REDIRECT
-                | EventMask::SUBSTRUCTURE_NOTIFY
-                | EventMask::KEY_PRESS
-                | EventMask::PROPERTY_CHANGE,
-        );
-        let result = 
-            conn
-            .change_window_attributes(root, &change)?
-            .check();
+fn become_window_manager<C: Connection>(conn: &C, root: u32) -> Res {
+    let change = ChangeWindowAttributesAux::default().event_mask(
+        EventMask::SUBSTRUCTURE_REDIRECT
+            | EventMask::SUBSTRUCTURE_NOTIFY
+            | EventMask::KEY_PRESS
+            | EventMask::PROPERTY_CHANGE,
+    );
+    let result = conn.change_window_attributes(root, &change)?.check();
 
-        if let Err(ReplyError::X11Error(ref error)) = result {
-            if error.error_kind == ErrorKind::Access {
-                log::error!("another wm is running");
-                exit(1);
-            } else {
-            }
+    if let Err(ReplyError::X11Error(ref error)) = result {
+        if error.error_kind == ErrorKind::Access {
+            log::error!("another wm is running");
+            exit(1);
         } else {
-            log::info!("became window manager successfully");
         }
-        Ok(())
+    } else {
+        log::info!("became window manager successfully");
     }
+    Ok(())
+}
 
 fn get_color_id<C: Connection>(
     conn: &C,

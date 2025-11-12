@@ -2,36 +2,18 @@
 
 mod actions;
 mod config;
+mod events;
 mod keys;
 mod state;
 use crate::{
     actions::ConnectionHandler,
     config::{Config, ConfigDeserialized},
+    events::EventHandler,
     keys::KeyHandler,
     state::*,
 };
 use std::{sync::mpsc, thread, time::Duration};
 use x11rb::{connection::Connection, errors::ReplyOrIdError};
-
-trait ErrorPrinter {
-    fn print(self);
-}
-
-impl ErrorPrinter for Result<(), ReplyOrIdError> {
-    fn print(self) {
-        let error = match self {
-            Ok(_) => return,
-            Err(e) => e,
-        };
-
-        log::error!("got error: {:?}", error);
-        match error {
-            ReplyOrIdError::X11Error(e) => log::error!("x11 error {:?}", e),
-            ReplyOrIdError::IdsExhausted => log::error!("ids exhausted"),
-            ReplyOrIdError::ConnectionError(e) => log::error!("connection error {:?}", e),
-        }
-    }
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_default_env()
@@ -40,11 +22,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (conn, screen_num) = x11rb::connect(None)?;
     let config = Config::from(ConfigDeserialized::new());
-    let handler = ConnectionHandler::new(&conn, screen_num, &config)?;
+    let conn_handler = ConnectionHandler::new(&conn, screen_num, &config)?;
     let key_handler = KeyHandler::new(&conn, &config)?;
-    let mut wm_state = ManagerState::new(&handler)?;
-    handler.draw_bar(&wm_state, None)?;
-    
+    let manager = StateHandler::new(TilingInfo {
+        gap: config.spacing as u16,
+        ratio: config.ratio,
+        width: conn_handler.screen.width_in_pixels,
+        height: conn_handler.screen.height_in_pixels,
+        bar_height: conn_handler.bar.height,
+    });
+
+    conn_handler.draw_bar(&manager, None)?;
+
+    let mut event_handler = EventHandler {
+        conn: &conn_handler,
+        man: manager,
+        key: key_handler,
+    };
+
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || -> Result<(), ReplyOrIdError> {
@@ -56,14 +51,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         if let Ok(_) = rx.try_recv() {
-            handler.draw_status_bar()?;
+            conn_handler.draw_status_bar()?;
         }
         conn.flush()?;
         let event = conn.wait_for_event()?;
         let mut event_as_option = Some(event);
 
         while let Some(event) = event_as_option {
-            wm_state.handle_event(&handler, &key_handler, event).print();
+            match event_handler.handle_event(event) {
+                Ok(_) => (),
+                Err(e) => log::error!("{}", e),
+            };
             event_as_option = conn.poll_for_event()?;
         }
     }
