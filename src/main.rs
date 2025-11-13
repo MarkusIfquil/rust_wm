@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         if let Ok(_) = rx.try_recv() {
+            conn_handler.draw_bar(&event_handler.man,event_handler.man.get_focus())?;
             conn_handler.draw_status_bar()?;
         }
         conn.flush()?;

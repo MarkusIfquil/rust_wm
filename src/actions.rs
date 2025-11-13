@@ -45,8 +45,11 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
         let id_font = conn.generate_id()?;
 
         let atom_strings = vec![
+            "UTF8_STRING",
             "WM_PROTOCOLS",
             "WM_DELETE_WINDOW",
+            "WM_NAME",
+            "_NET_WM_NAME",
             "_NET_SUPPORTED",
             "_NET_CLIENT_LIST",
             "_NET_NUMBER_OF_DESKTOPS",
@@ -161,18 +164,21 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn map(&self, window: &WindowState) -> Res {
+        log::debug!("handling map of {}", window.window);
         self.conn.map_window(window.frame_window)?;
         self.conn.map_window(window.window)?;
         Ok(())
     }
 
     pub fn unmap(&self, window: &WindowState) -> Res {
+        log::debug!("handling unmap of {}", window.window);
         self.conn.unmap_window(window.window)?;
         self.conn.unmap_window(window.frame_window)?;
         Ok(())
     }
 
     pub fn refresh(&self, wm_state: &StateHandler) -> Res {
+        log::debug!("refreshing");
         self.draw_bar(wm_state, wm_state.tags[wm_state.active_tag].focus)?;
         Ok(())
     }
@@ -192,6 +198,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn create_frame_of_window(&self, window: &WindowState) -> Res {
+        log::debug!("creating frame of {}", window.window);
         self.conn.create_window(
             COPY_DEPTH_FROM_PARENT,
             window.frame_window,
@@ -332,6 +339,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn set_focus_to_root(&self) -> Result<(), ReplyOrIdError> {
+        log::debug!("setting focus to root");
         self.conn
             .set_input_focus(InputFocus::NONE, 1 as u32, CURRENT_TIME)?;
         Ok(())
@@ -377,6 +385,8 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
             Some(w) => self.get_window_name(w)?,
             None => "".to_owned(),
         };
+
+        log::debug!("drawing bar with text: {bar_text}");
 
         self.conn.clear_area(
             false,
@@ -474,6 +484,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
 
     pub fn draw_status_bar(&self) -> Res {
         let status_text = self.get_window_name(self.screen.root)?;
+        log::debug!("drawing root windows name on bar with text: {status_text}");
         self.conn
             .clear_area(
                 false,
@@ -497,6 +508,7 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     pub fn set_fullscreen(&self, window: &WindowState) -> Res {
+        log::debug!("setting window to fullscreen {}", window.window);
         self.config_window_from_state(window)?;
         self.change_atom_prop(
             window.window,
@@ -518,22 +530,35 @@ impl<'a, C: Connection> ConnectionHandler<'a, C> {
     }
 
     fn get_window_name(&self, window: Window) -> Result<String, ReplyOrIdError> {
-        match String::from_utf8(
+        log::debug!("getting window name of {window}");
+
+        let result = String::from_utf8(
             self.conn
                 .get_property(
                     false,
                     window,
-                    AtomEnum::WM_NAME,
-                    AtomEnum::STRING,
+                    self.atoms["_NET_WM_NAME"],
+                    self.atoms["UTF8_STRING"],
                     0,
-                    u32::MAX,
+                    100,
                 )?
                 .reply()?
                 .value,
-        ) {
-            Ok(s) => Ok(s),
-            Err(_) => Ok("window".to_owned()),
-        }
+        )
+        .unwrap_or_default();
+
+        return if result.is_empty() {
+            let result = String::from_utf8(
+                self.conn
+                    .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 100)?
+                    .reply()?
+                    .value,
+            )
+            .unwrap_or_default();
+            Ok(result)
+        } else {
+            Ok(result)
+        };
     }
 
     fn create_tag_rectangle(&self, h: u16, x: usize) -> Rectangle {

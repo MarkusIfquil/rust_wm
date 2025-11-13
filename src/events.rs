@@ -73,7 +73,6 @@ impl<'a, C: Connection> EventHandler<'a, C> {
             event.response_type
         );
 
-        //side effect
         self.conn.destroy_window(window)?;
 
         self.man
@@ -215,7 +214,7 @@ impl<'a, C: Connection> EventHandler<'a, C> {
     fn refresh(&mut self) -> Res {
         self.refresh_focus()?;
         self.man.refresh();
-        self.config_all()?;
+        self.config_tag()?;
         self.conn.refresh(&self.man)?;
         self.man.print_state();
         Ok(())
@@ -244,27 +243,27 @@ impl<'a, C: Connection> EventHandler<'a, C> {
             return Ok(());
         }
         log::debug!("changing tag to {tag}");
-        self.unmap_all()?;
+        self.unmap_tag()?;
         self.man.active_tag = tag;
-        self.map_all()?;
+        self.map_tag()?;
         Ok(())
     }
 
-    fn map_all(&mut self) -> Res {
+    fn map_tag(&mut self) -> Res {
         self.man
             .get_active_tag_windows()
             .iter()
             .try_for_each(|w| self.conn.map(w))
     }
 
-    fn unmap_all(&mut self) -> Res {
+    fn unmap_tag(&mut self) -> Res {
         self.man
             .get_active_tag_windows()
             .iter()
             .try_for_each(|w| self.conn.unmap(w))
     }
 
-    fn config_all(&mut self) -> Res {
+    fn config_tag(&mut self) -> Res {
         self.man
             .get_active_tag_windows()
             .iter()
